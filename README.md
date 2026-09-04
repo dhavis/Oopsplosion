@@ -66,3 +66,11 @@ Signing and TestFlight wait until you have that Mac.
 ### Store icons
 
 `public/icon.svg` is a placeholder. Replace before Play / App Store submission.
+
+## Features & Physical Simulation
+
+- **Physics-Based Causality**: Continuous Cannon-es rigid body simulation with realistic material restitution, friction, damping, and momentum transfer.
+- **Electrical Surge & Blackout**: Liquid spill into electronics causes motor shorting, high-voltage lighting surge, filament explosion / glass bulb burst, and electrical breaker tripping.
+- **Continuous Aerodynamics**: Fan wind velocity field coupled to paper flutter and hanging pendant lamp pendulum swinging.
+- **Interactive Sandbox**: Isolated physics testbed with multi-part ceramic shattering, fluid sloshing and pouring, vector poke/drag gestures, and settling stabilization.
+- **Full QA Test Suites**: Automated Puppeteer test harnesses across mobile portrait viewports (`qa-office`, `qa-blackout`, `test-paper`, `qa-all-items`, `qa-sandbox`).
