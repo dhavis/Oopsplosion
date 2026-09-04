@@ -1,0 +1,38 @@
+{
+  "name": "oopsplosion",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A rage-room destruction game.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "cap:sync": "npm run build && npx cap sync",
+    "doctor": "node scripts/doctor.mjs",
+    "android:setup": "node scripts/setup-android.mjs",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:assemble": "npm run android:sync && node scripts/assemble-android.mjs",
+    "android:run": "npm run android:sync && npx cap run android",
+    "android": "npm run android:sync && npx cap open android",
+    "ios:sync": "npm run build && npx cap sync ios",
+    "ios": "node -e \"console.log('iOS build needs a Mac and Xcode. On Windows: npm run ios:sync (keeps the project current). On a Mac: npx cap open ios')\""
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@types/three": "^0.185.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.0",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3",
+    "cannon-es": "^0.20.0",
+    "three": "^0.185.1"
+  }
+}

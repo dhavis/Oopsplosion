@@ -1,0 +1,2 @@
+## Copy to local.properties (gitignored) or run npm run android:setup
+sdk.dir=C:/Users/YOU/AppData/Local/Android/Sdk

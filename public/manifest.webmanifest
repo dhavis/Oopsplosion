@@ -1,0 +1,19 @@
+{
+  "name": "Oopsplosion",
+  "short_name": "Oopsplosion",
+  "description": "Light a chain, then pile on.",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b0c",
+  "theme_color": "#0b0b0c",
+  "start_url": "./",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

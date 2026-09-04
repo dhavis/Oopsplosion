@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0b0c" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Oopsplosion" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <title>Oopsplosion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Sans:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="stage">
+      <div id="playfield">
+        <canvas id="room"></canvas>
+        <div id="chrome"></div>
+        <div id="mode-bar">
+          <button id="btn-office" class="mode-btn active" type="button">OFFICE</button>
+          <button id="btn-sandbox" class="mode-btn" type="button">SANDBOX</button>
+        </div>
+        <div id="sandbox-item-bar" class="hidden">
+          <button class="item-btn active" data-item="cup" type="button">MUG</button>
+          <button class="item-btn" data-item="phone" type="button">PHONE</button>
+          <button class="item-btn" data-item="fan" type="button">FAN</button>
+          <button class="item-btn" data-item="plant" type="button">PLANT</button>
+          <button class="item-btn" data-item="printer" type="button">PRINTER</button>
+        </div>
+        <div id="sandbox-hud" class="hidden">
+          <div class="hud-item">LIQUID: <span id="hud-liquid">220 mL</span></div>
+          <div class="hud-item">TILT: <span id="hud-tilt">0°</span></div>
+          <div class="hud-item">STATUS: <span id="hud-status">INTACT</span></div>
+          <button id="btn-hud-reset" class="hud-reset-btn" type="button">↺ RESET</button>
+        </div>
+        <button id="reset-room" class="hidden" type="button">RESET ROOM</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
