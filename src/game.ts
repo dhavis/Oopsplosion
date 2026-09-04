@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import { Foley } from "./audio";
 import { Chain } from "./chain";
 import { pixelRatio } from "./formFactors";
@@ -67,10 +68,34 @@ export class Game {
       events: () => this.chain.events.slice(),
       body: bodyOf,
       cup: () => bodyOf("cup"),
+      cupState: () => ({
+        pos: { ...this.world.cupBody?.mesh.position },
+        vel: { ...this.world.cupBody?.body.velocity },
+        liquidMl: this.world.cupBody?.liquidMl ?? (this.world.cupEmpty ? 0 : 220),
+        isBroken: this.world.cupBody?.isBroken ?? false,
+        tiltDeg: this.world.cupBody?.getTiltAngleDeg() ?? 0,
+      }),
       screen: (id: string) => this.world.screen(id as ObjLabel),
       aabb: (id: string) => this.world.meshAabb(id as ObjLabel),
       dist: (a: string, b: string) =>
         this.world.dist(this.world.get(a as ObjLabel), this.world.get(b as ObjLabel)),
+      lamp: () => ({
+        pos: { ...this.world.lampAssembly?.shadeBody.position },
+        vel: { ...this.world.lampAssembly?.shadeBody.velocity },
+        bulbPos: { ...this.world.lampAssembly?.bulbBody.position },
+        cordCount: this.world.lampAssembly?.cordBodies.length ?? 0,
+        bulbState: this.world.lampAssembly?.bulbState,
+        powerState: this.world.lampAssembly?.powerState,
+        isBroken: this.world.lampAssembly?.isBroken ?? false,
+      }),
+      bag: () => ({
+        pos: { ...this.world.bagAssembly?.baseBody.position },
+        vel: { ...this.world.bagAssembly?.baseBody.velocity },
+        mouthState: this.world.bagAssembly?.mouthState,
+        spillState: this.world.bagAssembly?.spillState,
+        containedCount: this.world.bagAssembly?.payloads.filter((p) => p.isContained).length ?? 0,
+        isBroken: this.world.bagAssembly?.isBroken ?? false,
+      }),
       power: () => ({
         breakerPopped: this.world.breakerPopped,
         blackout: this.world.blackout,
@@ -95,6 +120,17 @@ export class Game {
     this.lastHit = 0;
     this.cupPokeAt = 0;
     this.worldBorn = performance.now();
+    this.world.onCoffeePour = () => this.audio.slosh();
+    this.world.onShortCircuit = () => {
+      this.chain.link("wet>short");
+      this.audio.grind();
+      this.audio.surgeRise();
+      this.world.startLampSurge();
+      this.noteChain();
+    };
+    this.world.onShatter = (_pos, speed) => this.audio.shatter(speed);
+    this.world.onClatter = (_pos, speed) => this.audio.thud(speed);
+
     this.world.onContact((a, b) => {
       if (performance.now() - this.worldBorn < 700) return;
       const kind = this.chain.handle(this.world, a, b, performance.now());
@@ -217,12 +253,30 @@ export class Game {
       return note;
     }
     if (label === "plant") {
-      this.world.plantBroken = true;
+      if (poke) {
+        this.world.plantAssembly?.pokeFoliage(
+          new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.15, (Math.random() - 0.5) * 0.4),
+        );
+      } else {
+        this.world.plantAssembly?.pokePot(
+          new THREE.Vector3(dx * 2.5, 0.2, -dy * 2.5),
+        );
+      }
       this.audio.plant();
-      note = "vent";
+      note = "sway";
     }
     if (label === "bag") {
-      this.world.bagSpilled = true;
+      if (poke) {
+        this.world.bagAssembly?.pokeHandle(
+          0,
+          new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.25, (Math.random() - 0.5) * 0.4),
+        );
+      } else {
+        this.world.bagAssembly?.pokePanel(
+          new THREE.Vector3(dx * 2.5, 0.2, -dy * 2.5),
+        );
+      }
+      this.world.bagSpilled = this.world.bagAssembly?.spillState === "spilled";
       note = "vent";
     }
 

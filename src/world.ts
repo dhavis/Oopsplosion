@@ -4,7 +4,6 @@ import {
   CAM,
   COL,
   FAN_SPEC,
-  LAMP_CORD,
   MASS,
   MAT_PHYSICS,
   MOUTH,
@@ -14,6 +13,12 @@ import {
 } from "./scale";
 import { COVER_ASPECT, pixelRatio } from "./formFactors";
 import { palette } from "./theme";
+import { PottedPlantAssembly } from "./sandbox/PottedPlantAssembly";
+import { LampAssembly } from "./sandbox/LampAssembly";
+import { BagAssembly } from "./sandbox/BagAssembly";
+import { CupBody } from "./sandbox/CupBody";
+import { LiquidSimulation, LiquidSurface } from "./sandbox/LiquidSimulation";
+import { FractureSystem } from "./sandbox/FractureSystem";
 
 export type ObjLabel =
   | "printer"
@@ -83,15 +88,32 @@ export class OfficeWorld {
   printerFeral = false;
   copierAwake = false;
   copierPage = 1;
-  cupEmpty = false;
   plantBroken = false;
   bagSpilled = false;
+  plantAssembly!: PottedPlantAssembly;
+  lampAssembly!: LampAssembly;
+  bagAssembly!: BagAssembly;
+  cupBody!: CupBody;
+  liquid!: LiquidSimulation;
+  fracture!: FractureSystem;
   fanSpin = 14;
   breakerPopped = false;
   blackout = 0;
   lampSurging = false;
   lampBurst = false;
   lampSurgeStart = 0;
+
+  onCoffeePour?: (rate: number) => void;
+  onShortCircuit?: () => void;
+  onShatter?: (pos: THREE.Vector3, speed: number) => void;
+  onClatter?: (pos: THREE.Vector3, speed: number) => void;
+
+  get cupEmpty(): boolean {
+    return this.cupBody ? this.cupBody.liquidMl < 10 : false;
+  }
+  set cupEmpty(v: boolean) {
+    if (v && this.cupBody) this.cupBody.updateLiquid(0);
+  }
 
   readonly materials: Record<string, CANNON.Material> = {};
 
@@ -105,23 +127,6 @@ export class OfficeWorld {
   private fxDrip!: THREE.Points;
   private dripGeo!: THREE.BufferGeometry;
 
-  private lampBulbMesh!: THREE.Mesh;
-  private lampSocketMesh!: THREE.Mesh;
-  private lampBulbMat!: THREE.MeshStandardMaterial;
-  private lampLight!: THREE.PointLight;
-  private lampFlashLight!: THREE.PointLight;
-
-  private fxGlass!: THREE.Points;
-  private glassGeo!: THREE.BufferGeometry;
-  private glassLife: number[] = [];
-  private glassVel: Array<{ x: number; y: number; z: number }> = [];
-
-  private fxBulbSparks!: THREE.Points;
-  private bulbSparksGeo!: THREE.BufferGeometry;
-  private bulbSparksLife: number[] = [];
-  private bulbSparksVel: Array<{ x: number; y: number; z: number }> = [];
-
-  private hang: CANNON.Constraint | null = null;
   private jamPin: CANNON.Constraint | null = null;
   private paperJobs: { at: number; source: "printer" | "copier"; wet?: boolean }[] = [];
   private meshes = new Map<CANNON.Body, THREE.Object3D>();
@@ -131,12 +136,8 @@ export class OfficeWorld {
   private copierCtx!: CanvasRenderingContext2D;
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
-  private cordLine: THREE.Line;
   private contacts: Array<(a: SimBody, b: SimBody) => void> = [];
   private lastStep = performance.now();
-  private steam: THREE.Points;
-  private steamGeo: THREE.BufferGeometry;
-  private steamLife: number[] = [];
   private pourUntil = 0;
   private sparkUntil = 0;
   private fxPour!: THREE.Points;
@@ -170,35 +171,73 @@ export class OfficeWorld {
     this.buildRoom();
     this.catchVoid();
     this.buildProps();
-
-    const cordGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(POS.lampAnchor.x, POS.lampAnchor.y, POS.lampAnchor.z),
-      new THREE.Vector3(POS.lamp.x, POS.lamp.y + SIZE.lamp.h / 2, POS.lamp.z),
-    ]);
-    this.cordLine = new THREE.Line(
-      cordGeo,
-      new THREE.LineBasicMaterial({ color: "#2a2a28" }),
-    );
-    this.scene.add(this.cordLine);
-
-    this.steamGeo = new THREE.BufferGeometry();
-    const steamPos = new Float32Array(120 * 3);
-    this.steamGeo.setAttribute("position", new THREE.BufferAttribute(steamPos, 3));
-    this.steam = new THREE.Points(
-      this.steamGeo,
-      new THREE.PointsMaterial({
-        color: "#f4f1ea",
-        size: 0.09,
-        transparent: true,
-        opacity: 0.62,
-        depthWrite: false,
-        sizeAttenuation: true,
-      }),
-    );
-    this.scene.add(this.steam);
     this.initFx();
 
     this.physics.addEventListener("beginContact", (ev: { bodyA: CANNON.Body; bodyB: CANNON.Body }) => {
+      const { bodyA, bodyB } = ev;
+
+      // Cup contact and fracture check
+      if (this.cupBody && !this.cupBody.isBroken) {
+        const isCupA = bodyA === this.cupBody.body;
+        const isCupB = bodyB === this.cupBody.body;
+        if (isCupA || isCupB) {
+          const other = isCupA ? bodyB : bodyA;
+          const targetSim = this.fromCannon(other);
+          const targetLabel = targetSim ? targetSim.label : "floor";
+          const normalVel = Math.abs(this.cupBody.body.velocity.y);
+          const totalSpeed = this.cupBody.body.velocity.length();
+          const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+          const normal = new THREE.Vector3(0, 1, 0);
+          this.fracture.checkCollision(this.cupBody, targetLabel, impactSpeed, normal, this.liquid);
+        }
+      }
+
+      // Plant Pot contact check
+      if (this.plantAssembly && this.plantAssembly.potState !== "shattered") {
+        const isPlantA = bodyA === this.plantAssembly.potBody;
+        const isPlantB = bodyB === this.plantAssembly.potBody;
+        if (isPlantA || isPlantB) {
+          const other = isPlantA ? bodyB : bodyA;
+          if (!this.plantAssembly.isInternalBody(other)) {
+            const normalVel = Math.abs(this.plantAssembly.potBody.velocity.y);
+            const totalSpeed = this.plantAssembly.potBody.velocity.length();
+            const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+            const normal = new THREE.Vector3(0, 1, 0);
+            this.plantAssembly.checkCollision(impactSpeed, normal);
+          }
+        }
+      }
+
+      // Lamp Bulb & Shade contact check
+      if (this.lampAssembly) {
+        const isBulbA = bodyA === this.lampAssembly.bulbBody;
+        const isBulbB = bodyB === this.lampAssembly.bulbBody;
+        const isShadeA = bodyA === this.lampAssembly.shadeBody;
+        const isShadeB = bodyB === this.lampAssembly.shadeBody;
+        if (isBulbA || isBulbB || isShadeA || isShadeB) {
+          const hitBody = (isBulbA || isBulbB) ? this.lampAssembly.bulbBody : this.lampAssembly.shadeBody;
+          const normalVel = Math.abs(hitBody.velocity.y);
+          const totalSpeed = hitBody.velocity.length();
+          const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+          const normal = new THREE.Vector3(0, 1, 0);
+          this.lampAssembly.checkCollision(impactSpeed, normal);
+        }
+      }
+
+      // Bag contact check
+      if (this.bagAssembly) {
+        const isBagA = bodyA === this.bagAssembly.baseBody || bodyA === this.bagAssembly.upperBody;
+        const isBagB = bodyB === this.bagAssembly.baseBody || bodyB === this.bagAssembly.upperBody;
+        if (isBagA || isBagB) {
+          const hitBody = isBagA ? bodyA : bodyB;
+          const normalVel = Math.abs(hitBody.velocity.y);
+          const totalSpeed = hitBody.velocity.length();
+          const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+          const normal = new THREE.Vector3(0, 1, 0);
+          this.bagAssembly.checkCollision(impactSpeed, normal);
+        }
+      }
+
       const a = this.fromCannon(ev.bodyA);
       const b = this.fromCannon(ev.bodyB);
       if (!a || !b) return;
@@ -282,11 +321,6 @@ export class OfficeWorld {
       mesh.position.copy(body.position as unknown as THREE.Vector3);
       mesh.quaternion.copy(body.quaternion as unknown as THREE.Quaternion);
     }
-    const lamp = this.get("lamp");
-    const pos = this.cordLine.geometry.attributes.position as THREE.BufferAttribute;
-    pos.setXYZ(0, POS.lampAnchor.x, this.hang ? POS.lampAnchor.y : lamp.position.y + 0.2, POS.lampAnchor.z);
-    pos.setXYZ(1, lamp.position.x, lamp.position.y + SIZE.lamp.h / 2, lamp.position.z);
-    pos.needsUpdate = true;
 
     if (this.breakerPopped) {
       this.blackout = Math.min(1.0, this.blackout + dt * 6.0);
@@ -300,33 +334,39 @@ export class OfficeWorld {
     }
 
     // Lamp electrical surge & bulb over-voltage flicker
-    if (this.lampSurging && !this.lampBurst && !this.breakerPopped) {
-      const surgeDuration = (now - this.lampSurgeStart) / 1000;
-      const flicker = 0.5 + 0.5 * Math.sin(now * 0.08) * Math.cos(now * 0.13) + (Math.random() - 0.5) * 0.4;
-      const intensity = THREE.MathUtils.lerp(0.8, 6.5, Math.min(1.0, surgeDuration * 1.2)) + Math.max(0, flicker * 2.2);
-      if (this.lampBulbMat) {
-        this.lampBulbMat.emissive.set(surgeDuration > 0.5 ? "#ffffff" : "#fff0c0");
-        this.lampBulbMat.emissiveIntensity = intensity;
+    if (this.lampAssembly) {
+      this.lampAssembly.update(dt);
+      if (this.breakerPopped || this.lampAssembly.isBroken) {
+        this.lampAssembly.setPower("blackout");
+      } else if (this.lampSurging) {
+        const surgeDuration = (now - this.lampSurgeStart) / 1000;
+        const flicker = 0.5 + 0.5 * Math.sin(now * 0.08) * Math.cos(now * 0.13) + (Math.random() - 0.5) * 0.4;
+        this.lampAssembly.setPower("surging", Math.min(1.0, surgeDuration * 1.2) + Math.max(0, flicker * 0.5));
+      } else {
+        this.lampAssembly.setPower("on");
       }
-      if (this.lampLight) {
-        this.lampLight.color.set(surgeDuration > 0.5 ? "#ffffff" : "#ffe8c4");
-        this.lampLight.intensity = THREE.MathUtils.lerp(0.9, 3.8, Math.min(1.0, surgeDuration * 1.2)) + flicker * 1.2;
-      }
-    } else if (this.lampBurst || this.breakerPopped) {
-      if (this.lampLight) this.lampLight.intensity = 0;
-      if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = 0;
-    }
-
-    // Instant flash light decay
-    if (this.lampFlashLight && this.lampFlashLight.intensity > 0) {
-      this.lampFlashLight.intensity = Math.max(0, this.lampFlashLight.intensity - dt * 32);
     }
 
     this.spinFan(dt);
     this.fanBlow(dt);
-    this.tickSteam();
+    if (this.cupBody) {
+      this.cupBody.update(dt);
+      this.liquid?.update(dt, this.cupBody);
+    }
     this.tickFx();
     this.updateLcds();
+    if (this.plantAssembly) {
+      this.plantAssembly.update(dt);
+      if (this.plantAssembly.potState === "shattered" || this.plantAssembly.foliageState === "uprooted") {
+        this.plantBroken = true;
+      }
+    }
+    if (this.bagAssembly) {
+      this.bagAssembly.update(dt);
+      if (this.bagAssembly.spillState === "spilled") {
+        this.bagSpilled = true;
+      }
+    }
   }
 
   render() {
@@ -393,6 +433,42 @@ export class OfficeWorld {
     return null;
   }
 
+  pickDetail(
+    clientX: number,
+    clientY: number,
+    rect: DOMRect,
+  ): { sim: SimBody; point: THREE.Vector3; object: THREE.Object3D } | null {
+    this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const meshes: THREE.Object3D[] = [];
+    for (const sim of this.byLabel.values()) {
+      if (PICKABLE.has(sim.label)) meshes.push(sim.mesh);
+    }
+    for (const p of this.papers) meshes.push(p.mesh);
+    const hits = this.raycaster.intersectObjects(meshes, true);
+    if (hits[0]) {
+      let obj: THREE.Object3D | null = hits[0].object;
+      while (obj && !obj.userData.sim) obj = obj.parent;
+      if (obj?.userData.sim) {
+        return {
+          sim: obj.userData.sim as SimBody,
+          point: hits[0].point,
+          object: hits[0].object,
+        };
+      }
+    }
+    const simple = this.pick(clientX, clientY, rect);
+    if (simple) {
+      return {
+        sim: simple,
+        point: new THREE.Vector3(simple.position.x, simple.position.y, simple.position.z),
+        object: simple.mesh,
+      };
+    }
+    return null;
+  }
+
   impulse(body: SimBody, v: Vec3) {
     if (body.isStatic) return;
     body.body.wakeUp();
@@ -405,33 +481,8 @@ export class OfficeWorld {
   dumpCupIntoPrinter() {
     const cup = this.get("cup");
     cup.body.wakeUp();
-    cup.body.mass = MASS.cupEmpty;
-    cup.body.updateMassProperties();
-    cup.body.linearDamping = 0.22;
-    cup.body.angularDamping = 0.45;
-    cup.body.angularVelocity.set(-3.6, 0.4, 0.6);
-    cup.body.velocity.set(0.06, 0.02, -0.12);
-    this.cupEmpty = true;
-    this.pourUntil = performance.now() + 850;
-
-    // Realistic coffee puddle on the wooden desk surface below the printer
-    const deskY = SIZE.desk.h + 0.003;
-    if (!this.deskPuddleMesh) {
-      this.deskPuddleMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, 0.002, 24),
-        new THREE.MeshStandardMaterial({
-          color: palette.coffee,
-          roughness: 0.18,
-          metalness: 0.08,
-          transparent: true,
-          opacity: 0.92,
-        }),
-      );
-      this.deskPuddleMesh.name = "coffee-spill";
-      this.deskPuddleMesh.position.set(MOUTH.printer.x - 0.02, deskY, MOUTH.printer.z + 0.04);
-      this.deskPuddleMesh.receiveShadow = true;
-      this.scene.add(this.deskPuddleMesh);
-    }
+    cup.body.angularVelocity.set(-3.2, 0.2, 0.4);
+    cup.body.velocity.set(0.04, 0.01, -0.08);
   }
 
   jostle(label: ObjLabel, vx: number, vy: number, vz = 0) {
@@ -474,11 +525,8 @@ export class OfficeWorld {
   }
 
   swingLamp(strength = 1.4) {
-    const lamp = this.get("lamp");
-    lamp.body.wakeUp();
-    lamp.body.applyImpulse(
-      new CANNON.Vec3(-0.45 * strength, 0.05 * strength, 0.85 * strength),
-      new CANNON.Vec3(lamp.position.x, lamp.position.y - 0.04, lamp.position.z),
+    this.lampAssembly?.pokeShade(
+      new THREE.Vector3(-0.45 * strength, 0.05 * strength, 0.85 * strength),
     );
   }
 
@@ -513,26 +561,21 @@ export class OfficeWorld {
   startLampSurge() {
     this.lampSurging = true;
     this.lampSurgeStart = performance.now();
+    this.lampAssembly?.setPower("surging");
   }
 
   burstLampBulb() {
     if (this.lampBurst) return;
     this.lampBurst = true;
     this.lampSurging = false;
-    if (this.lampBulbMesh) this.lampBulbMesh.visible = false;
-    if (this.lampSocketMesh) this.lampSocketMesh.visible = true;
-    if (this.lampLight) this.lampLight.intensity = 0;
-    if (this.lampFlashLight) this.lampFlashLight.intensity = 8.5;
-
-    const lamp = this.get("lamp");
-    this.emitBulbShatter(lamp.position);
+    this.lampAssembly?.burstBulb();
   }
 
   popBreaker() {
     this.breakerPopped = true;
     this.sparkUntil = 0;
     this.lampSurging = false;
-    if (this.lampLight) this.lampLight.intensity = 0;
+    this.lampAssembly?.setPower("blackout");
   }
 
   kickPapersAt(_target?: Vec3, _speed?: number) {
@@ -597,17 +640,23 @@ export class OfficeWorld {
       const isLamp = item.label === "lamp";
       const appliedThrust = (isLamp ? forceMag * 1.5 : forceMag) * distFactor * angularFactor;
 
+      if (isLamp && this.lampAssembly) {
+        this.lampAssembly.applyAerodynamicDrag(
+          new THREE.Vector3(axis.x, axis.y, axis.z),
+          appliedThrust,
+        );
+        continue;
+      }
+
       p.wakeUp();
       p.applyForce(axis.scale(appliedThrust), p.position);
-      if (!isLamp) {
-        p.applyTorque(
-          new CANNON.Vec3(
-            (Math.random() - 0.5) * 0.015 * appliedThrust,
-            (Math.random() - 0.5) * 0.015 * appliedThrust,
-            (Math.random() - 0.5) * 0.015 * appliedThrust,
-          ),
-        );
-      }
+      p.applyTorque(
+        new CANNON.Vec3(
+          (Math.random() - 0.5) * 0.015 * appliedThrust,
+          (Math.random() - 0.5) * 0.015 * appliedThrust,
+          (Math.random() - 0.5) * 0.015 * appliedThrust,
+        ),
+      );
     }
   }
 
@@ -658,6 +707,12 @@ export class OfficeWorld {
   }
 
   destroy() {
+    this.plantAssembly?.destroy();
+    this.lampAssembly?.destroy();
+    this.bagAssembly?.destroy();
+    this.cupBody?.destroy();
+    this.liquid?.reset();
+    this.fracture?.reset();
     this.renderer.dispose();
     this.scene.clear();
   }
@@ -996,15 +1051,29 @@ export class OfficeWorld {
     copSim.body.quaternion.setFromEuler(0, -0.32, 0);
     copSim.mesh.quaternion.copy(copSim.body.quaternion as unknown as THREE.Quaternion);
 
-    this.dynamic(
-      "cup",
-      MASS.cup,
-      new CANNON.Box(new CANNON.Vec3(SIZE.cup.r * 0.95, SIZE.cup.h / 2, SIZE.cup.r * 0.95)),
-      this.cupMesh(),
-      POS.cup,
-      undefined,
+    this.cupBody = new CupBody(
       this.materials.ceramicGlazed,
+      new THREE.Vector3(POS.cup.x, 0.7875, POS.cup.z),
     );
+    this.filter(
+      this.cupBody.body,
+      COL.SOLID_PROP,
+      COL.STATIC_ENV | COL.SOLID_PROP | COL.MACHINE_BODY | COL.PAPER_SHEET | COL.SHARD,
+    );
+    const cupSim = new SimBody("cup", this.cupBody.body, this.cupBody.mesh);
+    this.cupBody.mesh.userData = { sim: cupSim, body: this.cupBody.body, label: "cup" };
+    this.cupBody.mesh.traverse((c) => {
+      c.userData.sim = cupSim;
+      c.userData.label = "cup";
+      if ((c as THREE.Mesh).isMesh) {
+        (c as THREE.Mesh).castShadow = true;
+        (c as THREE.Mesh).receiveShadow = true;
+      }
+    });
+    this.physics.addBody(this.cupBody.body);
+    this.scene.add(this.cupBody.mesh);
+    this.meshes.set(this.cupBody.body, this.cupBody.mesh);
+    this.byLabel.set("cup", cupSim);
 
     this.dynamic(
       "phone",
@@ -1034,33 +1103,139 @@ export class OfficeWorld {
     fanSim.body.quaternion.setFromEuler(0, 0.85, 0);
     fanSim.mesh.quaternion.copy(fanSim.body.quaternion as unknown as THREE.Quaternion);
 
-    this.hangLamp();
-    this.compoundChair();
-
-    this.dynamic(
-      "bag",
-      MASS.bag,
-      new CANNON.Box(new CANNON.Vec3(SIZE.bag.w / 2, SIZE.bag.h / 2, SIZE.bag.d / 2)),
-      this.bagMesh(),
-      POS.bag,
-      undefined,
-      this.materials.canvasFabric,
+    this.lampAssembly = new LampAssembly(
+      this.physics,
+      this.scene,
+      this.materials.paintedMetal,
+      new THREE.Vector3(POS.lampAnchor.x, POS.lampAnchor.y, POS.lampAnchor.z),
+      new THREE.Vector3(POS.lamp.x, POS.lamp.y, POS.lamp.z),
+      true,
     );
-
-    const plantBody = new CANNON.Body({
-      mass: MASS.plant,
-      shape: new CANNON.Box(new CANNON.Vec3(0.12, 0.18, 0.12)),
-      position: new CANNON.Vec3(POS.plant.x, POS.plant.y, POS.plant.z),
-      angularDamping: 0.4,
-      linearDamping: 0.18,
-      material: this.materials.terraCotta,
-    });
     this.filter(
-      plantBody,
+      this.lampAssembly.shadeBody,
       COL.SOLID_PROP,
       COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
     );
-    this.track("plant", plantBody, this.plantMesh());
+    this.filter(
+      this.lampAssembly.bulbBody,
+      COL.SOLID_PROP,
+      COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
+    );
+    const lampSim = new SimBody("lamp", this.lampAssembly.shadeBody, this.lampAssembly.group);
+    this.lampAssembly.group.userData = { sim: lampSim, body: this.lampAssembly.shadeBody, label: "lamp" };
+    this.lampAssembly.group.traverse((c) => {
+      c.userData.sim = lampSim;
+      c.userData.label = "lamp";
+      if ((c as THREE.Mesh).isMesh) {
+        (c as THREE.Mesh).castShadow = true;
+        (c as THREE.Mesh).receiveShadow = true;
+      }
+    });
+    this.meshes.set(this.lampAssembly.shadeBody, this.lampAssembly.group);
+    this.byLabel.set("lamp", lampSim);
+
+    this.compoundChair();
+
+    this.bagAssembly = new BagAssembly(
+      this.physics,
+      this.scene,
+      this.materials.canvasFabric,
+      new THREE.Vector3(POS.bag.x, POS.bag.y, POS.bag.z),
+      false,
+    );
+    this.filter(
+      this.bagAssembly.baseBody,
+      COL.SOLID_PROP,
+      COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
+    );
+    this.filter(
+      this.bagAssembly.upperBody,
+      COL.SOLID_PROP,
+      COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
+    );
+    for (const p of this.bagAssembly.payloads) {
+      this.filter(
+        p.body,
+        COL.SOLID_PROP,
+        COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
+      );
+    }
+
+    const bagSim = new SimBody("bag", this.bagAssembly.baseBody, this.bagAssembly.group);
+    this.bagAssembly.group.userData = { sim: bagSim, body: this.bagAssembly.baseBody, label: "bag" };
+    this.bagAssembly.group.traverse((c) => {
+      c.userData.sim = bagSim;
+      c.userData.label = "bag";
+      if ((c as THREE.Mesh).isMesh) {
+        (c as THREE.Mesh).castShadow = true;
+        (c as THREE.Mesh).receiveShadow = true;
+      }
+    });
+    this.meshes.set(this.bagAssembly.baseBody, this.bagAssembly.group);
+    this.byLabel.set("bag", bagSim);
+
+    this.plantAssembly = new PottedPlantAssembly(this.physics, this.scene, this.materials.terraCotta);
+    this.plantAssembly.reset(new THREE.Vector3(POS.plant.x, POS.plant.y, POS.plant.z));
+    const plantSim = new SimBody("plant", this.plantAssembly.potBody, this.plantAssembly.group);
+    this.plantAssembly.group.userData = { sim: plantSim, body: this.plantAssembly.potBody, label: "plant" };
+    this.plantAssembly.group.traverse((c) => {
+      c.userData.sim = plantSim;
+      c.userData.label = "plant";
+      if ((c as THREE.Mesh).isMesh) {
+        (c as THREE.Mesh).castShadow = true;
+        (c as THREE.Mesh).receiveShadow = true;
+      }
+    });
+    this.meshes.set(this.plantAssembly.potBody, this.plantAssembly.group);
+    this.byLabel.set("plant", plantSim);
+
+    const officeSurfaces: LiquidSurface[] = [
+      {
+        name: "printer",
+        minX: POS.printer.x - SIZE.printer.w / 2,
+        maxX: POS.printer.x + SIZE.printer.w / 2,
+        minZ: POS.printer.z - SIZE.printer.d / 2,
+        maxZ: POS.printer.z + SIZE.printer.d / 2,
+        y: POS.printer.y + SIZE.printer.h / 2,
+        isElectrical: true,
+      },
+      {
+        name: "desk",
+        minX: POS.desk.x - SIZE.desk.w / 2,
+        maxX: POS.desk.x + SIZE.desk.w / 2,
+        minZ: POS.desk.z - SIZE.desk.d / 2,
+        maxZ: POS.desk.z + SIZE.desk.d / 2,
+        y: SIZE.desk.h,
+      },
+      {
+        name: "copier",
+        minX: POS.copier.x - SIZE.copier.w / 2,
+        maxX: POS.copier.x + SIZE.copier.w / 2,
+        minZ: POS.copier.z - SIZE.copier.d / 2,
+        maxZ: POS.copier.z + SIZE.copier.d / 2,
+        y: POS.copier.y + SIZE.copier.h / 2,
+      },
+      {
+        name: "floor",
+        minX: -5.0,
+        maxX: 5.0,
+        minZ: -5.0,
+        maxZ: 5.0,
+        y: 0.0,
+      },
+    ];
+
+    this.liquid = new LiquidSimulation(this.scene, officeSurfaces);
+    this.liquid.onPour = (rate) => this.onCoffeePour?.(rate);
+    this.liquid.onElectricalWet = (_vol, target) => {
+      if (target === "printer") {
+        this.onShortCircuit?.();
+      }
+    };
+
+    this.fracture = new FractureSystem(this.physics, this.scene, this.materials.ceramicGlazed);
+    this.fracture.onShatter = (pos, speed) => this.onShatter?.(pos, speed);
+    this.fracture.onClatter = (pos, speed) => this.onClatter?.(pos, speed);
   }
 
   private pinJam() {
@@ -1090,29 +1265,6 @@ export class OfficeWorld {
       new CANNON.Vec3(0, 0, 0),
     );
     this.physics.addConstraint(this.jamPin);
-  }
-
-  private hangLamp() {
-    const lampMesh = this.lampMesh();
-    const lampBody = new CANNON.Body({
-      mass: MASS.lamp,
-      shape: new CANNON.Box(new CANNON.Vec3(SIZE.lamp.r * 0.7, SIZE.lamp.h / 2, SIZE.lamp.r * 0.7)),
-      position: new CANNON.Vec3(POS.lamp.x, POS.lamp.y, POS.lamp.z),
-      angularDamping: 0.04,
-      linearDamping: 0.025,
-      material: this.materials.paintedMetal,
-    });
-    this.filter(
-      lampBody,
-      COL.SOLID_PROP,
-      COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
-    );
-    this.track("lamp", lampBody, lampMesh);
-    const anchor = new CANNON.Body({ mass: 0, type: CANNON.BODY_TYPES.STATIC });
-    anchor.position.set(POS.lampAnchor.x, POS.lampAnchor.y, POS.lampAnchor.z);
-    this.physics.addBody(anchor);
-    this.hang = new CANNON.DistanceConstraint(anchor, lampBody, LAMP_CORD);
-    this.physics.addConstraint(this.hang);
   }
 
   private compoundChair() {
@@ -1430,40 +1582,6 @@ export class OfficeWorld {
     return g;
   }
 
-  private cupMesh() {
-    const g = new THREE.Group();
-    const ceramic = this.mat(palette.cup, { roughness: 0.42 });
-    g.add(new THREE.Mesh(new THREE.CylinderGeometry(SIZE.cup.r, SIZE.cup.r * 0.86, SIZE.cup.h, 24), ceramic));
-    const rim = new THREE.Mesh(
-      new THREE.TorusGeometry(SIZE.cup.r * 0.92, 0.005, 8, 20),
-      this.mat(palette.cup, { roughness: 0.35 }),
-    );
-    rim.rotation.x = Math.PI / 2;
-    rim.position.y = SIZE.cup.h / 2 - 0.004;
-    g.add(rim);
-    const coffee = new THREE.Mesh(
-      new THREE.CylinderGeometry(SIZE.cup.r * 0.78, SIZE.cup.r * 0.78, 0.008, 20),
-      this.mat(palette.coffee, { roughness: 0.22, metalness: 0.12 }),
-    );
-    coffee.name = "coffee";
-    coffee.position.y = SIZE.cup.h / 2 - 0.014;
-    g.add(coffee);
-    const handle = new THREE.Mesh(
-      new THREE.TorusGeometry(SIZE.cup.r * 0.55, SIZE.cup.r * 0.16, 8, 16, Math.PI),
-      ceramic,
-    );
-    handle.rotation.y = Math.PI / 2;
-    handle.position.x = SIZE.cup.r;
-    g.add(handle);
-    const chip = new THREE.Mesh(
-      new THREE.BoxGeometry(SIZE.cup.r * 0.28, 0.005, 0.008),
-      this.mat("#c4b8a8"),
-    );
-    chip.position.set(-SIZE.cup.r * 0.55, SIZE.cup.h / 2 - 0.002, 0.02);
-    g.add(chip);
-    return g;
-  }
-
   private phoneMesh() {
     const g = new THREE.Group();
     const w = SIZE.phone.w;
@@ -1571,53 +1689,6 @@ export class OfficeWorld {
     return g;
   }
 
-  private lampMesh() {
-    const g = new THREE.Group();
-    const shade = new THREE.Mesh(
-      new THREE.ConeGeometry(SIZE.lamp.r, SIZE.lamp.h, 20, 1, true),
-      this.mat("#c9c6bb", { side: THREE.DoubleSide, roughness: 0.72 }),
-    );
-    g.add(shade);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.03, 12), this.mat("#3a342c"));
-    cap.position.y = SIZE.lamp.h / 2;
-    g.add(cap);
-
-    // Socket / threaded base
-    this.lampSocketMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.014, 0.016, 0.024, 12),
-      this.mat("#282622", { metalness: 0.75, roughness: 0.35 }),
-    );
-    this.lampSocketMesh.position.y = 0.01;
-    this.lampSocketMesh.visible = false;
-    g.add(this.lampSocketMesh);
-
-    // Light bulb
-    this.lampBulbMat = new THREE.MeshStandardMaterial({
-      color: "#fff8e7",
-      emissive: "#ffeac2",
-      emissiveIntensity: 0.35,
-      roughness: 0.28,
-    });
-    this.lampBulbMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.032, 16, 16),
-      this.lampBulbMat,
-    );
-    this.lampBulbMesh.position.y = -0.02;
-    g.add(this.lampBulbMesh);
-
-    // Warm glow point light from lamp
-    this.lampLight = new THREE.PointLight("#ffe8c4", 0.75, 3.2, 1.6);
-    this.lampLight.position.set(0, -0.04, 0);
-    g.add(this.lampLight);
-
-    // Instant flash point light on bulb burst
-    this.lampFlashLight = new THREE.PointLight("#ffffff", 0, 5.0, 1.4);
-    this.lampFlashLight.position.set(0, -0.04, 0);
-    g.add(this.lampFlashLight);
-
-    return g;
-  }
-
   private chairMesh() {
     const g = new THREE.Group();
     const vinyl = this.mat(palette.chair, { roughness: 0.55 });
@@ -1640,90 +1711,6 @@ export class OfficeWorld {
       const off = i === 0 ? 0.04 : 0;
       wheel.position.set(Math.cos(a) * (0.2 + off), -0.45, Math.sin(a) * (0.2 + off));
       g.add(wheel);
-    }
-    return g;
-  }
-
-  private bagMesh() {
-    const g = new THREE.Group();
-    const cloth = this.mat("#6a5340", { roughness: 0.9 });
-    const dark = this.mat("#4a3a2c", { roughness: 0.88 });
-    const hull = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), cloth);
-    hull.scale.set(1.55, 0.7, 0.92);
-    g.add(hull);
-    const endL = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), dark);
-    endL.scale.set(0.65, 0.8, 0.9);
-    endL.position.x = -0.15;
-    g.add(endL);
-    const endR = endL.clone();
-    endR.position.x = 0.15;
-    g.add(endR);
-    const crease = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), cloth);
-    crease.scale.set(1.2, 0.45, 0.7);
-    crease.position.set(0.02, 0.03, 0.02);
-    g.add(crease);
-    const strap = new THREE.Mesh(
-      new THREE.TorusGeometry(0.14, 0.013, 6, 18, Math.PI * 1.2),
-      this.mat("#3a2c22", { roughness: 0.75 }),
-    );
-    strap.rotation.z = Math.PI / 2;
-    strap.rotation.y = 0.25;
-    strap.position.set(0.02, 0.09, -0.03);
-    g.add(strap);
-    const zip = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.012, 0.014),
-      this.mat("#c4b08a", { metalness: 0.45, roughness: 0.4 }),
-    );
-    zip.position.set(0, 0.075, 0.03);
-    g.add(zip);
-    const pull = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.028, 0.008), this.mat("#d8c9a0", { metalness: 0.5 }));
-    pull.position.set(0.07, 0.09, 0.04);
-    g.add(pull);
-    const tag = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.028, 0.004), this.mat("#c45c4a"));
-    tag.position.set(0.13, 0.02, 0.09);
-    g.add(tag);
-    const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.09), this.mat("#3d5c4a"));
-    shirt.name = "spill";
-    shirt.position.set(0.08, 0.02, 0.06);
-    shirt.visible = false;
-    g.add(shirt);
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.14, 6), this.mat("#1a1a18"));
-    cable.name = "spill";
-    cable.rotation.z = 1.1;
-    cable.position.set(-0.06, 0.04, 0.05);
-    cable.visible = false;
-    g.add(cable);
-    return g;
-  }
-
-  private plantMesh() {
-    const g = new THREE.Group();
-    const pot = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.1, 0.22, 14),
-      this.mat(palette.pot, { roughness: 0.7 }),
-    );
-    g.add(pot);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.012, 8, 16), this.mat(palette.pot));
-    rim.rotation.x = Math.PI / 2;
-    rim.position.y = 0.1;
-    g.add(rim);
-    const soil = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 12), this.mat("#3a2a1c"));
-    soil.position.y = 0.08;
-    g.add(soil);
-    const leafMat = this.mat(palette.plant, { roughness: 0.82 });
-    const leaves: [number, number, number, number, number][] = [
-      [-0.05, 0.4, 0.03, 0.11, 0.3],
-      [0.06, 0.52, 0.04, 0.12, 0.36],
-      [0.01, 0.58, -0.05, 0.1, 0.28],
-      [-0.07, 0.5, -0.04, 0.09, 0.24],
-      [0.08, 0.44, -0.02, 0.1, 0.26],
-      [0, 0.68, 0.02, 0.09, 0.32],
-    ];
-    for (const [x, y, z, sx, sy] of leaves) {
-      const leaf = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), leafMat);
-      leaf.scale.set(sx, sy, sx * 0.45);
-      leaf.position.set(x, y, z);
-      g.add(leaf);
     }
     return g;
   }
@@ -1759,68 +1746,12 @@ export class OfficeWorld {
     this.smokeGeo = smoke.geo;
     this.fxSmoke = smoke.mesh;
 
-    // Burst bulb glass shards
-    const glass = pts("#ffffff", 0.042, 35);
-    this.glassGeo = glass.geo;
-    this.fxGlass = glass.mesh;
-    for (let i = 0; i < 35; i++) {
-      this.glassLife.push(0);
-      this.glassVel.push({ x: 0, y: 0, z: 0 });
-    }
-
-    // Burst filament electric sparks
-    const bulbSpark = pts("#ffbb33", 0.048, 50);
-    this.bulbSparksGeo = bulbSpark.geo;
-    this.fxBulbSparks = bulbSpark.mesh;
-    for (let i = 0; i < 50; i++) {
-      this.bulbSparksLife.push(0);
-      this.bulbSparksVel.push({ x: 0, y: 0, z: 0 });
-    }
-
     this.pourBeam = new THREE.Mesh(
       new THREE.CylinderGeometry(0.012, 0.018, 1, 8),
       this.mat(palette.coffee, { roughness: 0.25, transparent: true, opacity: 0.82 }),
     );
     this.pourBeam.visible = false;
     this.scene.add(this.pourBeam);
-  }
-
-  private emitBulbShatter(pos: Vec3) {
-    const bulbPos = {
-      x: pos.x,
-      y: pos.y - 0.02,
-      z: pos.z,
-    };
-
-    // Glass shards
-    const gPos = this.glassGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < 35; i++) {
-      this.glassLife[i] = 1.0;
-      gPos.setXYZ(i, bulbPos.x, bulbPos.y, bulbPos.z);
-      const theta = Math.random() * Math.PI * 2;
-      const speed = 0.6 + Math.random() * 1.6;
-      this.glassVel[i] = {
-        x: Math.cos(theta) * speed * 0.75 + (Math.random() - 0.5) * 0.3,
-        y: (Math.random() - 0.6) * speed * 1.1,
-        z: Math.sin(theta) * speed * 0.75 + (Math.random() - 0.5) * 0.3,
-      };
-    }
-    gPos.needsUpdate = true;
-
-    // Filament sparks
-    const sPos = this.bulbSparksGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < 50; i++) {
-      this.bulbSparksLife[i] = 1.0;
-      sPos.setXYZ(i, bulbPos.x, bulbPos.y, bulbPos.z);
-      const theta = Math.random() * Math.PI * 2;
-      const speed = 1.2 + Math.random() * 2.6;
-      this.bulbSparksVel[i] = {
-        x: Math.cos(theta) * speed + (Math.random() - 0.5) * 0.4,
-        y: (Math.random() - 0.3) * speed * 1.3,
-        z: Math.sin(theta) * speed + (Math.random() - 0.5) * 0.4,
-      };
-    }
-    sPos.needsUpdate = true;
   }
 
   private tickFx() {
@@ -1872,56 +1803,6 @@ export class OfficeWorld {
       mouth.z + (Math.random() - 0.5) * 0.06,
     ]);
 
-    // Update glass shards
-    if (this.glassLife.length > 0) {
-      const gPos = this.glassGeo.attributes.position as THREE.BufferAttribute;
-      let anyAlive = false;
-      for (let i = 0; i < this.glassLife.length; i++) {
-        if (this.glassLife[i] <= 0) continue;
-        anyAlive = true;
-        this.glassLife[i] -= 0.016 * 0.85;
-        const vel = this.glassVel[i];
-        vel.y -= 9.8 * 0.016;
-        let px = gPos.getX(i) + vel.x * 0.016;
-        let py = gPos.getY(i) + vel.y * 0.016;
-        let pz = gPos.getZ(i) + vel.z * 0.016;
-        if (py < 0.01) {
-          py = 0.01;
-          vel.y = -vel.y * 0.25;
-          vel.x *= 0.7;
-          vel.z *= 0.7;
-        }
-        gPos.setXYZ(i, px, py, pz);
-      }
-      gPos.needsUpdate = true;
-      (this.fxGlass.material as THREE.PointsMaterial).opacity = anyAlive ? 0.9 : 0;
-    }
-
-    // Update bulb filament sparks
-    if (this.bulbSparksLife.length > 0) {
-      const sPos = this.bulbSparksGeo.attributes.position as THREE.BufferAttribute;
-      let anyAlive = false;
-      for (let i = 0; i < this.bulbSparksLife.length; i++) {
-        if (this.bulbSparksLife[i] <= 0) continue;
-        anyAlive = true;
-        this.bulbSparksLife[i] -= 0.016 * 2.4;
-        const vel = this.bulbSparksVel[i];
-        vel.y -= 9.8 * 0.016;
-        vel.x *= 0.96;
-        vel.z *= 0.96;
-        let px = sPos.getX(i) + vel.x * 0.016;
-        let py = sPos.getY(i) + vel.y * 0.016;
-        let pz = sPos.getZ(i) + vel.z * 0.016;
-        if (py < 0.01) {
-          py = 0.01;
-          vel.y = -vel.y * 0.3;
-        }
-        sPos.setXYZ(i, px, py, pz);
-      }
-      sPos.needsUpdate = true;
-      (this.fxBulbSparks.material as THREE.PointsMaterial).opacity = anyAlive ? 1.0 : 0;
-    }
-
     (this.fxPour.material as THREE.PointsMaterial).opacity = pouring ? 0.95 : 0;
     (this.fxDrip.material as THREE.PointsMaterial).opacity = (pouring || this.printerFeral) ? 0.9 : 0;
     (this.fxSpark.material as THREE.PointsMaterial).opacity = sparking ? 1 : 0;
@@ -1954,47 +1835,49 @@ export class OfficeWorld {
     if (fan) fan.rotation.x += dt * this.fanSpin;
   }
 
-  private tickSteam() {
-    const positions = this.steamGeo.attributes.position as THREE.BufferAttribute;
-    const cup = this.get("cup").position;
-    if (!this.cupEmpty && Math.random() < 0.4 && this.steamLife.length < 28) {
-      this.steamLife.push(1);
-      const i = this.steamLife.length - 1;
-      positions.setXYZ(i, cup.x, cup.y + SIZE.cup.h / 2 + 0.01, cup.z);
-    }
-    for (let i = this.steamLife.length - 1; i >= 0; i--) {
-      this.steamLife[i] -= 0.012;
-      if (this.steamLife[i] <= 0) {
-        this.steamLife.splice(i, 1);
-        continue;
-      }
-      positions.setY(i, positions.getY(i) + 0.004);
-    }
-    for (let i = this.steamLife.length; i < 120; i++) positions.setXYZ(i, 0, -10, 0);
-    positions.needsUpdate = true;
-    (this.steam.material as THREE.PointsMaterial).opacity = this.cupEmpty ? 0 : 0.6;
-  }
-
   private updateLcds() {
     const p = this.printerCtx;
     if (this.breakerPopped && this.blackout > 0.75) {
       p.fillStyle = "#0a0a08";
       p.fillRect(0, 0, 256, 64);
-    } else {
-      p.fillStyle = this.printerFeral ? "#3a2018" : "#1a1c16";
+    } else if (this.printerFeral) {
+      p.fillStyle = "#3a2018";
       p.fillRect(0, 0, 256, 64);
-      p.fillStyle = this.printerFeral ? "#f3c9a0" : "#8f9a72";
-      p.font = "20px sans-serif";
-      p.fillText(this.printerFeral ? "SHORT / NO PWR" : "PC LOAD LETTER", 12, 42);
+      p.fillStyle = "#f3c9a0";
+      p.font = "bold 20px monospace";
+      p.fillText("SHORT / NO PWR", 16, 40);
+    } else if (this.paperJobs.some((j) => j.source === "printer")) {
+      p.fillStyle = "#111612";
+      p.fillRect(0, 0, 256, 64);
+      p.fillStyle = "#5cd668";
+      p.font = "bold 20px monospace";
+      p.fillText("PRINTING...", 16, 40);
+    } else {
+      p.fillStyle = "#111612";
+      p.fillRect(0, 0, 256, 64);
+      p.fillStyle = "#5cd668";
+      p.font = "bold 20px monospace";
+      p.fillText("ONLINE - READY", 16, 40);
     }
     this.printerLcd.needsUpdate = true;
 
     const c = this.copierCtx;
-    c.fillStyle = this.copierAwake ? "#1a120c" : "#111";
-    c.fillRect(0, 0, 256, 64);
-    c.fillStyle = this.copierAwake ? "#f3c28a" : "#6a6e62";
-    c.font = "18px sans-serif";
-    c.fillText(this.copierAwake ? `PRINTING ${this.copierPage} OF 847` : "", 10, 40);
+    if (this.breakerPopped && this.blackout > 0.75) {
+      c.fillStyle = "#0a0a08";
+      c.fillRect(0, 0, 256, 64);
+    } else if (this.copierAwake) {
+      c.fillStyle = "#1a120c";
+      c.fillRect(0, 0, 256, 64);
+      c.fillStyle = "#f3c28a";
+      c.font = "bold 18px monospace";
+      c.fillText(`PRINTING ${this.copierPage} OF 847`, 12, 40);
+    } else {
+      c.fillStyle = "#111612";
+      c.fillRect(0, 0, 256, 64);
+      c.fillStyle = "#5cd668";
+      c.font = "bold 18px monospace";
+      c.fillText("READY / STANDBY", 12, 40);
+    }
     this.copierLcd.needsUpdate = true;
 
     const coffee = this.get("cup").mesh.getObjectByName("coffee");
@@ -2006,17 +1889,17 @@ export class OfficeWorld {
         mat.emissive = new THREE.Color("#050505");
         mat.color = mat.emissive;
         mat.emissiveIntensity = 0;
-      } else {
-        const hot = this.printerFeral;
-        const blink = hot || Math.sin(performance.now() / 420) > 0;
-        const col = hot ? palette.ledHot : palette.led;
-        mat.emissive = new THREE.Color(col);
+      } else if (this.printerFeral) {
+        const blink = Math.sin(performance.now() / 120) > 0;
+        mat.emissive = new THREE.Color(palette.ledHot);
         mat.color = mat.emissive;
-        mat.emissiveIntensity = blink ? (hot ? 2.2 : 1.6) : 0.15;
+        mat.emissiveIntensity = blink ? 2.6 : 0.2;
+      } else {
+        // Normal calm ready steady green glow
+        mat.emissive = new THREE.Color(palette.led);
+        mat.color = mat.emissive;
+        mat.emissiveIntensity = 1.6;
       }
     }
-    this.get("bag").mesh.traverse((c) => {
-      if (c.name === "spill") c.visible = this.bagSpilled;
-    });
   }
 }

@@ -34,7 +34,7 @@ export class FractureSystem {
 
   checkCollision(
     cup: CupBody,
-    targetLabel: "floor" | "counter",
+    targetLabel: string,
     normalImpactSpeed: number,
     contactNormal: THREE.Vector3,
     liquidSim: LiquidSimulation,
@@ -42,7 +42,7 @@ export class FractureSystem {
     if (cup.isBroken) return false;
 
     const threshold =
-      targetLabel === "floor"
+      targetLabel === "floor" || targetLabel === "carpetFloor"
         ? CUP_SPEC.shatterFloorVelocity
         : CUP_SPEC.shatterCounterVelocity;
 

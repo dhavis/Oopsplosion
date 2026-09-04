@@ -3,6 +3,16 @@ import { CupBody } from "./CupBody";
 import { SANDBOX_ROOM } from "./sandboxScale";
 import { palette } from "../theme";
 
+export interface LiquidSurface {
+  name: string;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  y: number;
+  isElectrical?: boolean;
+}
+
 interface LiquidDroplet {
   position: THREE.Vector3;
   velocity: THREE.Vector3;
@@ -17,11 +27,12 @@ interface PuddleDecal {
   radius: number;
   maxRadius: number;
   volumeMl: number;
-  surface: "counter" | "floor";
+  surface: string;
 }
 
 export class LiquidSimulation {
   private scene: THREE.Scene;
+  private surfaces: LiquidSurface[];
   private droplets: LiquidDroplet[] = [];
   private puddles: PuddleDecal[] = [];
   
@@ -39,11 +50,24 @@ export class LiquidSimulation {
   // Spill accumulation
   private spillRateAccumulator = 0;
   
-  // Callback when pouring occurs
+  // Callbacks
   onPour?: (rateMlPerSec: number) => void;
+  onElectricalWet?: (volumeMl: number, targetName: string) => void;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, surfaces?: LiquidSurface[]) {
     this.scene = scene;
+    this.surfaces = surfaces ?? [
+      {
+        name: "counter",
+        minX: SANDBOX_ROOM.counterPos.x - SANDBOX_ROOM.counter.w / 2,
+        maxX: SANDBOX_ROOM.counterPos.x + SANDBOX_ROOM.counter.w / 2,
+        minZ: SANDBOX_ROOM.counterPos.z - SANDBOX_ROOM.counter.d / 2,
+        maxZ: SANDBOX_ROOM.counterPos.z + SANDBOX_ROOM.counter.d / 2,
+        y: SANDBOX_ROOM.counterPos.y + SANDBOX_ROOM.counter.h / 2,
+      },
+    ];
+    // Sort surfaces highest y first
+    this.surfaces.sort((a, b) => b.y - a.y);
 
     this.particleGeo = new THREE.BufferGeometry();
     const positions = new Float32Array(this.maxParticles * 3);
@@ -192,9 +216,6 @@ export class LiquidSimulation {
 
   private updateDroplets(dt: number) {
     const gravity = -9.82;
-    const counterY = SANDBOX_ROOM.counterPos.y + SANDBOX_ROOM.counter.h / 2; // y = 0.80
-    const counterHalfW = SANDBOX_ROOM.counter.w / 2;
-    const counterHalfD = SANDBOX_ROOM.counter.d / 2;
     const floorY = 0;
 
     for (let i = this.droplets.length - 1; i >= 0; i--) {
@@ -205,21 +226,32 @@ export class LiquidSimulation {
       d.velocity.y += gravity * dt;
       d.position.addScaledVector(d.velocity, dt);
 
-      // Check collision with floating counter
-      const inCounterBounds =
-        Math.abs(d.position.x - SANDBOX_ROOM.counterPos.x) <= counterHalfW &&
-        Math.abs(d.position.z - SANDBOX_ROOM.counterPos.z) <= counterHalfD;
-
-      if (inCounterBounds && d.position.y <= counterY && d.position.y >= counterY - 0.08) {
-        // Hit counter!
-        this.addOrGrowPuddle(
-          new THREE.Vector3(d.position.x, counterY + 0.0015, d.position.z),
-          d.volumeMl,
-          "counter",
-        );
-        this.droplets.splice(i, 1);
-        continue;
+      // Check configured surfaces from highest Y to lowest Y
+      let hitSurface = false;
+      for (const s of this.surfaces) {
+        if (
+          d.position.x >= s.minX &&
+          d.position.x <= s.maxX &&
+          d.position.z >= s.minZ &&
+          d.position.z <= s.maxZ &&
+          d.position.y <= s.y + 0.02 &&
+          d.position.y >= s.y - 0.10
+        ) {
+          if (s.isElectrical) {
+            this.onElectricalWet?.(d.volumeMl, s.name);
+          }
+          this.addOrGrowPuddle(
+            new THREE.Vector3(d.position.x, s.y + 0.0015, d.position.z),
+            d.volumeMl,
+            s.name,
+          );
+          this.droplets.splice(i, 1);
+          hitSurface = true;
+          break;
+        }
       }
+
+      if (hitSurface) continue;
 
       // Check collision with floor
       if (d.position.y <= floorY) {
@@ -238,7 +270,7 @@ export class LiquidSimulation {
     }
   }
 
-  private addOrGrowPuddle(hitPos: THREE.Vector3, volumeMl: number, surface: "counter" | "floor") {
+  private addOrGrowPuddle(hitPos: THREE.Vector3, volumeMl: number, surface: string) {
     // Check if there is an existing puddle nearby to merge with
     for (const p of this.puddles) {
       if (p.surface === surface && p.position.distanceTo(hitPos) < p.radius * 0.9 + 0.03) {

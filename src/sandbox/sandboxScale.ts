@@ -52,11 +52,13 @@ export const CUP_SPEC = {
   maxAngularVelocity: 10.0, // rad/s
 };
 
+import { COL } from "../scale";
+
 export const SANDBOX_COL = {
-  ENV: 1 << 0,      // 1: Floor, Counter
-  CUP: 1 << 1,      // 2: Coffee Mug
-  LIQUID: 1 << 2,   // 4: Liquid droplets
-  SHARD: 1 << 3,    // 8: Ceramic shards
+  ENV: COL.STATIC_ENV,      // 1: Floor, Counter
+  CUP: COL.SOLID_PROP,      // 2: Coffee Mug / Props
+  LIQUID: COL.LIQUID,       // 32: Liquid droplets
+  SHARD: COL.SHARD,         // 64: Ceramic/glass shards
 };
 
 export const SANDBOX_MAT = {

@@ -1,7 +1,16 @@
 import * as CANNON from "cannon-es";
 import * as THREE from "three";
-import { CupBody } from "./CupBody";
 import { CUP_SPEC, SANDBOX_ROOM } from "./sandboxScale";
+import { PottedPlantAssembly } from "./PottedPlantAssembly";
+import { LampAssembly } from "./LampAssembly";
+import { BagAssembly } from "./BagAssembly";
+
+export interface InteractiveTarget {
+  body: CANNON.Body;
+  mesh: THREE.Object3D;
+  assembly?: PottedPlantAssembly | LampAssembly | BagAssembly;
+  isBroken?: boolean;
+}
 
 export class CupInteraction {
   private camera: THREE.PerspectiveCamera;
@@ -13,6 +22,12 @@ export class CupInteraction {
   private dragPlane = new THREE.Plane();
   private isDragging = false;
   private pointerId: number | null = null;
+  private activeBody: CANNON.Body | null = null;
+  private isFoliageHit = false;
+  private isBulbHit = false;
+  private isBagHandleHit = false;
+  private bagHandleIdx = 0;
+  private lastHitWorld = new THREE.Vector3();
 
   // Spring attachment parameters
   private localGrabPoint = new CANNON.Vec3();
@@ -50,19 +65,20 @@ export class CupInteraction {
     this.scene.add(this.grabIndicator);
   }
 
-  onPointerDown(clientX: number, clientY: number, pointerId: number, cup: CupBody) {
-    if (cup.isBroken) return;
+  onPointerDown(clientX: number, clientY: number, pointerId: number, target: InteractiveTarget) {
+    if (target.isBroken) return;
 
     const rect = this.canvas.getBoundingClientRect();
     this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    const intersects = this.raycaster.intersectObject(cup.mesh, true);
+    const intersects = this.raycaster.intersectObject(target.mesh, true);
 
     if (intersects.length > 0) {
       const hit = intersects[0];
       const hitPoint = hit.point;
+      this.lastHitWorld.copy(hitPoint);
       this.initialHitDistance = hit.distance;
 
       this.isDragging = true;
@@ -70,9 +86,44 @@ export class CupInteraction {
       this.dragStartTime = performance.now();
       this.samples = [{ x: clientX, y: clientY, t: this.dragStartTime }];
 
-      // Store local grab anchor on cup
+      // Determine active body based on part hit
+      let hitBody = target.body;
+      this.isFoliageHit = false;
+      this.isBulbHit = false;
+      this.isBagHandleHit = false;
+
+      if (target.assembly instanceof PottedPlantAssembly) {
+        if (hitPoint.y >= 0.98) {
+          hitBody = target.assembly.stemBody;
+          this.isFoliageHit = true;
+        } else {
+          hitBody = target.assembly.potBody;
+        }
+      } else if (target.assembly instanceof LampAssembly) {
+        if (hitPoint.y < 1.05 && target.assembly.bulbState !== "burst") {
+          hitBody = target.assembly.bulbBody;
+          this.isBulbHit = true;
+        } else if (hitPoint.y > 1.25 && target.assembly.cordBodies.length > 0) {
+          hitBody = target.assembly.cordBodies[Math.floor(target.assembly.cordBodies.length / 2)];
+        } else {
+          hitBody = target.assembly.shadeBody;
+        }
+      } else if (target.assembly instanceof BagAssembly) {
+        if (hitPoint.y > 1.00 && target.assembly.handleBodies.length > 0) {
+          this.bagHandleIdx = hitPoint.x < 0 ? 0 : 1;
+          hitBody = target.assembly.handleBodies[this.bagHandleIdx];
+          this.isBagHandleHit = true;
+        } else if (hitPoint.y > 0.86) {
+          hitBody = target.assembly.upperBody;
+        } else {
+          hitBody = target.assembly.baseBody;
+        }
+      }
+      this.activeBody = hitBody;
+
+      // Store local grab anchor on target body
       const hitCannon = new CANNON.Vec3(hitPoint.x, hitPoint.y, hitPoint.z);
-      this.localGrabPoint = cup.body.pointToLocalFrame(hitCannon, new CANNON.Vec3());
+      this.localGrabPoint = hitBody.pointToLocalFrame(hitCannon, new CANNON.Vec3());
 
       // Drag plane perpendicular to camera view ray
       const camDir = new THREE.Vector3();
@@ -87,7 +138,7 @@ export class CupInteraction {
       this.grabIndicator.quaternion.copy(this.camera.quaternion);
       this.grabIndicator.visible = true;
 
-      cup.body.wakeUp();
+      hitBody.wakeUp();
     }
   }
 
@@ -117,9 +168,9 @@ export class CupInteraction {
         Math.abs(target.z - SANDBOX_ROOM.counterPos.z) <= counterHalfD;
 
       if (overCounter) {
-        target.y = Math.max(counterY + CUP_SPEC.height / 2 + 0.005, target.y);
+        target.y = Math.max(counterY + 0.04, target.y);
       }
-      target.y = Math.max(CUP_SPEC.height / 2 + 0.005, target.y);
+      target.y = Math.max(0.04, target.y);
 
       // Bound within viewable space
       target.x = THREE.MathUtils.clamp(target.x, -1.5, 1.5);
@@ -132,15 +183,16 @@ export class CupInteraction {
     }
   }
 
-  onPointerUp(_clientX: number, _clientY: number, pointerId: number, cup: CupBody) {
+  onPointerUp(_clientX: number, _clientY: number, pointerId: number, target: InteractiveTarget) {
     if (!this.isDragging || this.pointerId !== pointerId) return;
 
     this.isDragging = false;
     this.grabIndicator.visible = false;
     this.pointerId = null;
 
-    if (cup.isBroken) return;
+    if (target.isBroken) return;
 
+    const body = this.activeBody ?? target.body;
     const dragDuration = performance.now() - this.dragStartTime;
 
     // Calculate pointer velocity from sample window (80-120 ms)
@@ -165,14 +217,40 @@ export class CupInteraction {
       this.camera.getWorldDirection(rayDir);
       
       const pushDir = new THREE.Vector3(rayDir.x, 0.08, rayDir.z).normalize();
-      const impulseMag = 0.22 * cup.body.mass; // ~0.11 N*s
+      const impulseMag = (this.isFoliageHit ? 0.35 : 0.22) * body.mass;
       
-      const contactWorld = cup.body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
-      cup.body.wakeUp();
-      cup.body.applyImpulse(
-        new CANNON.Vec3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
-        contactWorld,
-      );
+      if (this.isFoliageHit && target.assembly instanceof PottedPlantAssembly) {
+        target.assembly.pokeFoliage(
+          new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+          this.lastHitWorld,
+        );
+      } else if (this.isBulbHit && target.assembly instanceof LampAssembly) {
+        target.assembly.pokeBulb(
+          new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+        );
+      } else if (target.assembly instanceof LampAssembly) {
+        target.assembly.pokeShade(
+          new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+          this.lastHitWorld,
+        );
+      } else if (this.isBagHandleHit && target.assembly instanceof BagAssembly) {
+        target.assembly.pokeHandle(
+          this.bagHandleIdx,
+          new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+        );
+      } else if (target.assembly instanceof BagAssembly) {
+        target.assembly.pokePanel(
+          new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+          this.lastHitWorld,
+        );
+      } else {
+        const contactWorld = body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
+        body.wakeUp();
+        body.applyImpulse(
+          new CANNON.Vec3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
+          contactWorld,
+        );
+      }
       this.onHitAction?.("poke", impulseMag);
       return;
     }
@@ -195,45 +273,64 @@ export class CupInteraction {
       worldSwipe.y = Math.min(CUP_SPEC.maxGestureUpwardV, Math.max(-2.0, worldSwipe.y));
       
       // Calculate 3D impulse J = m * deltaV
-      const impulse = worldSwipe.clone().multiplyScalar(cup.body.mass);
-      const contactWorld = cup.body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
-
-      cup.body.wakeUp();
-      cup.body.applyImpulse(
-        new CANNON.Vec3(impulse.x, impulse.y, impulse.z),
-        contactWorld,
-      );
+      const impulse = worldSwipe.clone().multiplyScalar(body.mass);
+      if (this.isFoliageHit && target.assembly instanceof PottedPlantAssembly) {
+        target.assembly.pokeFoliage(impulse, this.lastHitWorld);
+      } else if (this.isBulbHit && target.assembly instanceof LampAssembly) {
+        target.assembly.pokeBulb(impulse);
+      } else if (target.assembly instanceof LampAssembly) {
+        target.assembly.pokeShade(impulse, this.lastHitWorld);
+      } else if (this.isBagHandleHit && target.assembly instanceof BagAssembly) {
+        target.assembly.pokeHandle(this.bagHandleIdx, impulse);
+      } else if (target.assembly instanceof BagAssembly) {
+        target.assembly.pokePanel(impulse, this.lastHitWorld);
+      } else {
+        const contactWorld = body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
+        body.wakeUp();
+        body.applyImpulse(
+          new CANNON.Vec3(impulse.x, impulse.y, impulse.z),
+          contactWorld,
+        );
+      }
       this.onHitAction?.("flick", impulse.length());
       return;
     }
 
     // Release from lift/drag: Hand simply lets go; do not double-boost velocity
-    cup.body.wakeUp();
-    const curSpeed = cup.body.velocity.length();
+    body.wakeUp();
+    const curSpeed = body.velocity.length();
     if (curSpeed > CUP_SPEC.maxGestureDeltaV) {
-      cup.body.velocity.scale(CUP_SPEC.maxGestureDeltaV / curSpeed, cup.body.velocity);
+      body.velocity.scale(CUP_SPEC.maxGestureDeltaV / curSpeed, body.velocity);
     }
-    if (cup.body.velocity.y > CUP_SPEC.maxGestureUpwardV) {
-      cup.body.velocity.y = CUP_SPEC.maxGestureUpwardV;
+    if (body.velocity.y > CUP_SPEC.maxGestureUpwardV) {
+      body.velocity.y = CUP_SPEC.maxGestureUpwardV;
     }
-    this.onHitAction?.("release", cup.body.velocity.length());
+    this.onHitAction?.("release", body.velocity.length());
   }
 
-  updatePhysics(dt: number, cup: CupBody) {
-    if (!this.isDragging || cup.isBroken || dt <= 0) return;
+  updatePhysics(dt: number, target: InteractiveTarget) {
+    if (!this.isDragging || target.isBroken || dt <= 0) return;
+
+    const body = this.activeBody ?? target.body;
 
     // Measure target velocity
     this.targetVelocity.copy(this.targetWorldPoint).sub(this.prevTargetWorldPoint).divideScalar(dt);
     this.targetVelocity.clampLength(0, CUP_SPEC.maxTargetVelocity);
     this.prevTargetWorldPoint.copy(this.targetWorldPoint);
 
-    // World position of the grabbed point on the cup
-    const grabWorldCannon = cup.body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
+    // World position of the grabbed point on the target body
+    const grabWorldCannon = body.pointToWorldFrame(this.localGrabPoint, new CANNON.Vec3());
     const grabWorld = new THREE.Vector3(grabWorldCannon.x, grabWorldCannon.y, grabWorldCannon.z);
 
     // Point velocity at grab point
-    const velCannon = cup.body.getVelocityAtWorldPoint(grabWorldCannon, new CANNON.Vec3());
+    const velCannon = body.getVelocityAtWorldPoint(grabWorldCannon, new CANNON.Vec3());
     const pointVelocity = new THREE.Vector3(velCannon.x, velCannon.y, velCannon.z);
+
+    // Dynamic mass scaling for spring-damper to hold lighter or heavier objects naturally
+    const massScale = Math.max(0.2, body.mass / 0.54);
+    const k = CUP_SPEC.springK * massScale;
+    const c = CUP_SPEC.dampingC * massScale;
+    const maxForce = CUP_SPEC.maxSpringForce * massScale;
 
     // Spring Force: F = k * (x_target - x_grab) - c * (v_point - v_target)
     const displacement = this.targetWorldPoint.clone().sub(grabWorld);
@@ -242,14 +339,14 @@ export class CupInteraction {
     const relVel = pointVelocity.clone().sub(this.targetVelocity);
 
     const force = displacement
-      .multiplyScalar(CUP_SPEC.springK)
-      .sub(relVel.multiplyScalar(CUP_SPEC.dampingC));
+      .multiplyScalar(k)
+      .sub(relVel.multiplyScalar(c));
 
-    force.clampLength(0, CUP_SPEC.maxSpringForce);
+    force.clampLength(0, maxForce);
 
     // Apply force at the grabbed point
-    cup.body.wakeUp();
-    cup.body.applyForce(
+    body.wakeUp();
+    body.applyForce(
       new CANNON.Vec3(force.x, force.y, force.z),
       grabWorldCannon,
     );
@@ -259,5 +356,6 @@ export class CupInteraction {
     this.isDragging = false;
     this.grabIndicator.visible = false;
     this.pointerId = null;
+    this.activeBody = null;
   }
 }

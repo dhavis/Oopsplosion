@@ -280,6 +280,9 @@ body {
   transform: translateX(-50%);
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 95vw;
   gap: 4px;
   background: rgba(18, 18, 20, 0.75);
   backdrop-filter: blur(8px);

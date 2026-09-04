@@ -43,7 +43,7 @@ page.on("console", (m) => {
   if (m.type() === "error") errors.push(`CONSOLE: ${m.text()}`);
 });
 
-const items = ["cup", "phone", "fan", "plant", "printer"];
+const items = ["cup", "phone", "fan", "plant", "printer", "lamp", "chair", "bag"];
 const results = {};
 
 try {
@@ -66,6 +66,19 @@ try {
 
     // Capture resting screenshot
     await page.screenshot({ path: join(out, `sandbox-${item}-calm.png`) });
+
+    // Test direct pointer drag / poke interaction on the canvas
+    const canvasBox = await page.$eval("#room", (el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+
+    // Perform pointer down, move, up on canvas to drag/poke the object
+    await page.mouse.move(canvasBox.x, canvasBox.y);
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + 60, canvasBox.y - 40, { steps: 5 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 300));
 
     // Test physics impulse / vector push
     await page.evaluate(() => {

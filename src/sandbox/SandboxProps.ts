@@ -2,12 +2,17 @@ import * as CANNON from "cannon-es";
 import * as THREE from "three";
 import { SANDBOX_COL } from "./sandboxScale";
 import { palette } from "../theme";
+import { PottedPlantAssembly } from "./PottedPlantAssembly";
+import { LampAssembly } from "./LampAssembly";
+import { BagAssembly } from "./BagAssembly";
 
 export interface SandboxItem {
   id: string;
   name: string;
   body: CANNON.Body;
   mesh: THREE.Object3D;
+  assembly?: PottedPlantAssembly | LampAssembly | BagAssembly;
+  isBroken?: boolean;
   update(dt: number): void;
   reset(): void;
   destroy(): void;
@@ -166,69 +171,29 @@ export class PlantProp implements SandboxItem {
   name = "Potted Plant";
   body: CANNON.Body;
   mesh: THREE.Group;
-  isBroken = false;
+  readonly assembly: PottedPlantAssembly;
 
-  constructor(material: CANNON.Material) {
-    this.body = new CANNON.Body({
-      mass: 5.2,
-      material,
-      linearDamping: 0.15,
-      angularDamping: 0.35,
-      allowSleep: true,
-    });
-    this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.12, 0.18, 0.12)));
-    this.body.position.set(0, 0.98, 0);
-    this.body.collisionFilterGroup = SANDBOX_COL.CUP;
-    this.body.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
-
-    this.mesh = new THREE.Group();
-    const potMat = new THREE.MeshStandardMaterial({ color: palette.pot, roughness: 0.7 });
-    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.22, 16), potMat);
-    pot.castShadow = true;
-    pot.receiveShadow = true;
-    this.mesh.add(pot);
-
-    const soil = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.1, 0.02, 14),
-      new THREE.MeshStandardMaterial({ color: "#3a2818", roughness: 0.9 }),
-    );
-    soil.position.y = 0.09;
-    this.mesh.add(soil);
-
-    const leafMat = new THREE.MeshStandardMaterial({ color: palette.plant, roughness: 0.75 });
-    for (let i = 0; i < 6; i++) {
-      const a = (i * Math.PI * 2) / 6;
-      const leaf = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), leafMat);
-      leaf.scale.set(0.08, 0.26, 0.03);
-      leaf.position.set(Math.cos(a) * 0.06, 0.2 + (i % 2) * 0.06, Math.sin(a) * 0.06);
-      leaf.rotation.z = Math.cos(a) * 0.35;
-      leaf.rotation.x = Math.sin(a) * 0.35;
-      this.mesh.add(leaf);
-    }
-
-    this.syncMesh();
+  get isBroken() {
+    return this.assembly.potState === "shattered";
   }
 
-  update(_dt: number) {
-    this.syncMesh();
+  constructor(material: CANNON.Material, world: CANNON.World, scene: THREE.Scene) {
+    this.assembly = new PottedPlantAssembly(world, scene, material);
+    this.body = this.assembly.potBody;
+    this.mesh = this.assembly.group;
   }
 
-  syncMesh() {
-    this.mesh.position.copy(this.body.position as unknown as THREE.Vector3);
-    this.mesh.quaternion.copy(this.body.quaternion as unknown as THREE.Quaternion);
+  update(dt: number) {
+    this.assembly.update(dt);
   }
 
   reset() {
-    this.isBroken = false;
-    this.body.position.set(0, 0.98, 0);
-    this.body.velocity.set(0, 0, 0);
-    this.body.angularVelocity.set(0, 0, 0);
-    this.body.quaternion.set(0, 0, 0, 1);
-    this.body.wakeUp();
-    this.syncMesh();
+    this.assembly.reset(new THREE.Vector3(0, 0.91, 0));
   }
 
-  destroy() {}
+  destroy() {
+    this.assembly.destroy();
+  }
 }
 
 export class PrinterProp implements SandboxItem {
@@ -267,6 +232,29 @@ export class PrinterProp implements SandboxItem {
     tray.position.set(0, -h / 2 + 0.08, d / 2 + 0.08);
     this.mesh.add(tray);
 
+    const bezel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.05, 0.008),
+      new THREE.MeshStandardMaterial({ color: "#2a2c28", roughness: 0.6 }),
+    );
+    bezel.position.set(0.06, 0.04, d / 2 + 0.001);
+    this.mesh.add(bezel);
+    const lcdCanvas = document.createElement("canvas");
+    lcdCanvas.width = 256;
+    lcdCanvas.height = 64;
+    const ctx = lcdCanvas.getContext("2d")!;
+    ctx.fillStyle = "#111612";
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.fillStyle = "#5cd668";
+    ctx.font = "bold 20px monospace";
+    ctx.fillText("ONLINE - READY", 16, 40);
+    const lcdTex = new THREE.CanvasTexture(lcdCanvas);
+    const lcd = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.16, 0.04),
+      new THREE.MeshBasicMaterial({ map: lcdTex }),
+    );
+    lcd.position.set(0.06, 0.04, d / 2 + 0.006);
+    this.mesh.add(lcd);
+
     const led = new THREE.Mesh(
       new THREE.SphereGeometry(0.012, 12, 12),
       new THREE.MeshStandardMaterial({ color: palette.led, emissive: palette.led, emissiveIntensity: 1.5 }),
@@ -297,4 +285,148 @@ export class PrinterProp implements SandboxItem {
   }
 
   destroy() {}
+}
+
+export class LampProp implements SandboxItem {
+  id = "lamp";
+  name = "Desk Lamp";
+  body: CANNON.Body;
+  mesh: THREE.Group;
+  readonly assembly: LampAssembly;
+
+  get isBroken() {
+    return this.assembly.isBroken;
+  }
+
+  constructor(material: CANNON.Material, world: CANNON.World, scene: THREE.Scene) {
+    this.assembly = new LampAssembly(
+      world,
+      scene,
+      material,
+      new THREE.Vector3(0, 1.85, 0),
+      new THREE.Vector3(0, 1.05, 0),
+      true,
+    );
+    this.body = this.assembly.shadeBody;
+    this.mesh = this.assembly.group;
+  }
+
+  update(dt: number) {
+    this.assembly.update(dt);
+  }
+
+  reset() {
+    this.assembly.reset(new THREE.Vector3(0, 1.85, 0), new THREE.Vector3(0, 1.05, 0));
+  }
+
+  destroy() {
+    this.assembly.destroy();
+  }
+}
+
+export class ChairProp implements SandboxItem {
+  id = "chair";
+  name = "Office Chair";
+  body: CANNON.Body;
+  mesh: THREE.Group;
+
+  constructor(material: CANNON.Material) {
+    this.body = new CANNON.Body({
+      mass: 14.8,
+      material,
+      linearDamping: 0.08,
+      angularDamping: 0.45,
+      allowSleep: true,
+    });
+    this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.23, 0.035, 0.23)));
+    this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.22, 0.24, 0.025)), new CANNON.Vec3(0, 0.27, -0.2));
+    this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.035, 0.18, 0.035)), new CANNON.Vec3(0, -0.21, 0));
+    this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.22, 0.025, 0.22)), new CANNON.Vec3(0, -0.4, 0));
+    this.body.position.set(0, 1.28, 0);
+    this.body.collisionFilterGroup = SANDBOX_COL.CUP;
+    this.body.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+
+    this.mesh = new THREE.Group();
+    const vinyl = new THREE.MeshStandardMaterial({ color: palette.chair, roughness: 0.55 });
+    const metal = new THREE.MeshStandardMaterial({ color: "#3a3a3c", metalness: 0.45, roughness: 0.4 });
+    
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.46), vinyl);
+    seat.castShadow = true;
+    seat.receiveShadow = true;
+    this.mesh.add(seat);
+
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.48, 0.05), vinyl);
+    back.position.set(0, 0.28, -0.2);
+    back.castShadow = true;
+    back.receiveShadow = true;
+    this.mesh.add(back);
+
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.36, 10), metal);
+    stem.position.y = -0.21;
+    this.mesh.add(stem);
+
+    for (let i = 0; i < 5; i++) {
+      const a = (i * Math.PI * 2) / 5 + 0.2;
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.025, 0.04), metal);
+      arm.position.set(Math.cos(a) * 0.11, -0.4, Math.sin(a) * 0.11);
+      arm.rotation.y = -a;
+      this.mesh.add(arm);
+
+      const wheel = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 8), metal);
+      wheel.position.set(Math.cos(a) * 0.2, -0.45, Math.sin(a) * 0.2);
+      this.mesh.add(wheel);
+    }
+
+    this.syncMesh();
+  }
+
+  update(_dt: number) {
+    this.syncMesh();
+  }
+
+  syncMesh() {
+    this.mesh.position.copy(this.body.position as unknown as THREE.Vector3);
+    this.mesh.quaternion.copy(this.body.quaternion as unknown as THREE.Quaternion);
+  }
+
+  reset() {
+    this.body.position.set(0, 1.28, 0);
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+    this.body.quaternion.set(0, 0, 0, 1);
+    this.body.wakeUp();
+    this.syncMesh();
+  }
+
+  destroy() {}
+}
+
+export class BagProp implements SandboxItem {
+  id = "bag";
+  name = "Messenger Bag";
+  body: CANNON.Body;
+  mesh: THREE.Group;
+  readonly assembly: BagAssembly;
+
+  get isBroken() {
+    return this.assembly.isBroken;
+  }
+
+  constructor(material: CANNON.Material, world: CANNON.World, scene: THREE.Scene) {
+    this.assembly = new BagAssembly(world, scene, material, new THREE.Vector3(0, 0.88, 0), false);
+    this.body = this.assembly.baseBody;
+    this.mesh = this.assembly.group;
+  }
+
+  update(dt: number) {
+    this.assembly.update(dt);
+  }
+
+  reset() {
+    this.assembly.reset(new THREE.Vector3(0, 0.88, 0));
+  }
+
+  destroy() {
+    this.assembly.destroy();
+  }
 }
