@@ -128,6 +128,52 @@ export class Foley {
     this.blip(4500, 0.08, "sawtooth", 0.06);
   }
 
+  shatter(speed = 1.0) {
+    const ctx = this.audio();
+    if (!ctx) return;
+
+    // High crash noise burst + resonant ceramic ring
+    const bufferSize = Math.floor(ctx.sampleRate * 0.35);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.06));
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(1800, ctx.currentTime);
+
+    const noiseGain = ctx.createGain();
+    const vol = Math.min(0.7, 0.3 + speed * 0.08);
+    noiseGain.gain.setValueAtTime(vol, ctx.currentTime);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.32);
+
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start();
+
+    // Resonant ceramic shard ping
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(1250, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.25);
+
+    oscGain.gain.setValueAtTime(vol * 0.6, ctx.currentTime);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.26);
+  }
+
   breakerPop() {
     const ctx = this.audio();
     if (!ctx) return;

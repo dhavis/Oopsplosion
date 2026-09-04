@@ -20,7 +20,10 @@ export class CupBody {
   prevVelocity = new CANNON.Vec3();
   acceleration = new THREE.Vector3();
 
-  constructor(material: CANNON.Material) {
+  constructor(
+    material: CANNON.Material,
+    initPos = new THREE.Vector3(CUP_SPEC.initialPos.x, CUP_SPEC.initialPos.y, CUP_SPEC.initialPos.z),
+  ) {
     const rTop = CUP_SPEC.outerRadius;
     const rBot = CUP_SPEC.outerRadius * 0.90;
     const h = CUP_SPEC.height;
@@ -50,7 +53,7 @@ export class CupBody {
 
     this.body.collisionFilterGroup = SANDBOX_COL.CUP;
     this.body.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
-    this.body.position.set(CUP_SPEC.initialPos.x, CUP_SPEC.initialPos.y, CUP_SPEC.initialPos.z);
+    this.body.position.set(initPos.x, initPos.y, initPos.z);
 
     // Three.js visual group
     this.mesh = new THREE.Group();
@@ -300,6 +303,14 @@ export class CupBody {
   getCriticalTiltAngleDeg(): number {
     const f = this.liquidMl / CUP_SPEC.coffeeMaxMl;
     return THREE.MathUtils.lerp(CUP_SPEC.criticalTiltEmptyDeg, CUP_SPEC.criticalTiltFullDeg, f);
+  }
+
+  update(dt: number) {
+    this.updatePhysics(dt);
+  }
+
+  destroy() {
+    this.mesh.clear();
   }
 
   reset(pos = CUP_SPEC.initialPos) {

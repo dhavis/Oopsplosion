@@ -145,6 +145,8 @@ try {
     }
   }
   await setPhone(page, AUTHOR);
+  await loadFresh();
+  await new Promise((r) => setTimeout(r, 600));
   const room = await page.$("#room");
   if (!room) throw new Error("#room canvas missing after cover pass");
 

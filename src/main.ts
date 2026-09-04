@@ -115,7 +115,8 @@ class AppManager {
 
   private updateSandboxHud() {
     if (!this.sandbox) return;
-    if (this.sandbox.activePropId === "cup") {
+    const propId = this.sandbox.activePropId;
+    if (propId === "cup") {
       const cup = this.sandbox.cup;
       this.hudLiquid.textContent = `${Math.round(cup.liquidMl)} mL`;
       this.hudTilt.textContent = `${Math.round(cup.getTiltAngleDeg())}°`;
@@ -130,11 +131,98 @@ class AppManager {
         this.hudStatus.style.color = "#8fd18f";
       }
     } else {
-      const propId = this.sandbox.activePropId;
-      this.hudLiquid.textContent = "N/A";
-      this.hudTilt.textContent = "0°";
-      this.hudStatus.textContent = propId.toUpperCase();
-      this.hudStatus.style.color = "#c4a574";
+      const body = this.sandbox.props.get(propId)?.body;
+      const vel = body ? Math.hypot(body.velocity.x, body.velocity.y, body.velocity.z) : 0;
+      const speedStr = vel > 0.05 ? `${vel.toFixed(1)} m/s` : "RESTING";
+
+      if (propId === "phone") {
+        this.hudLiquid.textContent = "195 g";
+        this.hudTilt.textContent = speedStr;
+        this.hudStatus.textContent = "ACTIVE";
+        this.hudStatus.style.color = "#8fd18f";
+      } else if (propId === "fan") {
+        this.hudLiquid.textContent = "1.25 kg";
+        this.hudTilt.textContent = speedStr;
+        this.hudStatus.textContent = "BLOWING";
+        this.hudStatus.style.color = "#7ab8e8";
+      } else if (propId === "plant") {
+        const plantItem = this.sandbox.props.get("plant") as { assembly?: { soilRemainingMl: number; getTiltAngleDeg: () => number; potState: string; foliageState: string; soilState: string } } | undefined;
+        if (plantItem?.assembly) {
+          this.hudLiquid.textContent = `${Math.round(plantItem.assembly.soilRemainingMl)} mL SOIL`;
+          this.hudTilt.textContent = `${Math.round(plantItem.assembly.getTiltAngleDeg())}°`;
+          if (plantItem.assembly.potState === "shattered") {
+            this.hudStatus.textContent = "SHATTERED";
+            this.hudStatus.style.color = "#e07a6a";
+          } else if (plantItem.assembly.foliageState === "uprooted") {
+            this.hudStatus.textContent = "UPROOTED";
+            this.hudStatus.style.color = "#e0a56a";
+          } else if (plantItem.assembly.soilState === "spilling") {
+            this.hudStatus.textContent = "SPILLING";
+            this.hudStatus.style.color = "#c8b56a";
+          } else {
+            this.hudStatus.textContent = "INTACT";
+            this.hudStatus.style.color = "#8fd18f";
+          }
+        } else {
+          this.hudLiquid.textContent = "5.2 kg";
+          this.hudTilt.textContent = speedStr;
+          this.hudStatus.textContent = "CERAMIC";
+          this.hudStatus.style.color = "#8fd18f";
+        }
+      } else if (propId === "printer") {
+        this.hudLiquid.textContent = "8.5 kg";
+        this.hudTilt.textContent = speedStr;
+        this.hudStatus.textContent = "READY";
+        this.hudStatus.style.color = "#8fd18f";
+      } else if (propId === "lamp") {
+        const lampItem = this.sandbox.props.get("lamp") as { assembly?: { bulbState: string; powerState: string } } | undefined;
+        if (lampItem?.assembly) {
+          this.hudLiquid.textContent = lampItem.assembly.powerState.toUpperCase();
+          this.hudTilt.textContent = speedStr;
+          if (lampItem.assembly.bulbState === "burst") {
+            this.hudStatus.textContent = "BURST";
+            this.hudStatus.style.color = "#e07a6a";
+          } else if (lampItem.assembly.powerState === "surging") {
+            this.hudStatus.textContent = "SURGING";
+            this.hudStatus.style.color = "#ffffff";
+          } else {
+            this.hudStatus.textContent = "LIT";
+            this.hudStatus.style.color = "#f4d068";
+          }
+        } else {
+          this.hudLiquid.textContent = "1.85 kg";
+          this.hudTilt.textContent = speedStr;
+          this.hudStatus.textContent = "GLOWING";
+          this.hudStatus.style.color = "#f4d068";
+        }
+      } else if (propId === "chair") {
+        this.hudLiquid.textContent = "14.8 kg";
+        this.hudTilt.textContent = speedStr;
+        this.hudStatus.textContent = "ROLLING";
+        this.hudStatus.style.color = "#8fd18f";
+      } else if (propId === "bag") {
+        const bagItem = this.sandbox.props.get("bag") as { assembly?: { payloads: Array<{ isContained: boolean }>; getTiltAngleDeg: () => number; spillState: string; mouthState: string } } | undefined;
+        if (bagItem?.assembly) {
+          const contained = bagItem.assembly.payloads.filter((p) => p.isContained).length;
+          this.hudLiquid.textContent = `${contained}/6 ITEMS`;
+          this.hudTilt.textContent = `${Math.round(bagItem.assembly.getTiltAngleDeg())}°`;
+          if (bagItem.assembly.spillState === "spilled") {
+            this.hudStatus.textContent = "SPILLED";
+            this.hudStatus.style.color = "#e07a6a";
+          } else if (bagItem.assembly.mouthState === "open") {
+            this.hudStatus.textContent = "OPEN";
+            this.hudStatus.style.color = "#c8b56a";
+          } else {
+            this.hudStatus.textContent = "PACKED";
+            this.hudStatus.style.color = "#8fd18f";
+          }
+        } else {
+          this.hudLiquid.textContent = "4.8 kg";
+          this.hudTilt.textContent = speedStr;
+          this.hudStatus.textContent = "CANVAS";
+          this.hudStatus.style.color = "#c4a574";
+        }
+      }
     }
   }
 }

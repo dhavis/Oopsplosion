@@ -75,11 +75,13 @@ export const FAN_RANGE = FAN_SPEC.range;
 export const LAMP_CORD = 0.93;
 
 export const COL = {
-  STATIC_ENV: 1 << 0, // 1
-  SOLID_PROP: 1 << 1, // 2
-  PAPER_SHEET: 1 << 2, // 4
-  MACHINE_BODY: 1 << 3, // 8
-  TRIGGER_ZONE: 1 << 4, // 16
+  STATIC_ENV: 1 << 0, // 1: Floor, Desk, Walls
+  SOLID_PROP: 1 << 1, // 2: Cup, Phone, Fan, Plant, Lamp, Chair, Bag
+  PAPER_SHEET: 1 << 2, // 4: Loose sheets
+  MACHINE_BODY: 1 << 3, // 8: Printer, Copier
+  TRIGGER_ZONE: 1 << 4, // 16: Wind zones, trigger sensors
+  LIQUID: 1 << 5, // 32: Liquid droplets
+  SHARD: 1 << 6, // 64: Glass/ceramic shards
 
   // Aliases for compatibility
   solid: (1 << 0) | (1 << 1),

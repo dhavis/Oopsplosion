@@ -5,7 +5,16 @@ import { CupBody } from "./CupBody";
 import { CupInteraction } from "./CupInteraction";
 import { FractureSystem } from "./FractureSystem";
 import { LiquidSimulation } from "./LiquidSimulation";
-import { FanProp, PhoneProp, PlantProp, PrinterProp, type SandboxItem } from "./SandboxProps";
+import {
+  BagProp,
+  ChairProp,
+  FanProp,
+  LampProp,
+  PhoneProp,
+  PlantProp,
+  PrinterProp,
+  type SandboxItem,
+} from "./SandboxProps";
 import {
   SANDBOX_CAM,
   SANDBOX_COL,
@@ -15,7 +24,7 @@ import {
 import { palette } from "../theme";
 import { pixelRatio } from "../formFactors";
 
-export type SandboxPropId = "cup" | "phone" | "fan" | "plant" | "printer";
+export type SandboxPropId = "cup" | "phone" | "fan" | "plant" | "printer" | "lamp" | "chair" | "bag";
 
 export class CupSandboxWorld {
   readonly scene = new THREE.Scene();
@@ -181,17 +190,25 @@ export class CupSandboxWorld {
     // Additional Props
     const phone = new PhoneProp(matCounter);
     const fan = new FanProp(matCounter);
-    const plant = new PlantProp(matCeramic);
+    const plant = new PlantProp(matCeramic, this.physics, this.scene);
     const printer = new PrinterProp(matCounter);
+    const lamp = new LampProp(matCounter, this.physics, this.scene);
+    const chair = new ChairProp(matCounter);
+    const bag = new BagProp(matCounter, this.physics, this.scene);
 
     this.props.set("phone", phone);
     this.props.set("fan", fan);
     this.props.set("plant", plant);
     this.props.set("printer", printer);
+    this.props.set("lamp", lamp);
+    this.props.set("chair", chair);
+    this.props.set("bag", bag);
 
     for (const prop of this.props.values()) {
-      this.physics.addBody(prop.body);
-      this.scene.add(prop.mesh);
+      if (prop.id !== "plant" && prop.id !== "lamp" && prop.id !== "bag") {
+        this.physics.addBody(prop.body);
+        this.scene.add(prop.mesh);
+      }
       prop.mesh.visible = false;
       prop.body.position.set(0, -50, 0);
     }
@@ -204,6 +221,10 @@ export class CupSandboxWorld {
     this.liquid.onPour = (rate) => this.audio.playPour(rate);
     this.fracture.onShatter = (_pos, speed) => this.audio.playShatter(speed);
     this.fracture.onClatter = (_pos, speed) => this.audio.playClatter(speed);
+    plant.assembly.onShatter = (_pos, speed) => this.audio.playShatter(speed);
+    plant.assembly.onSpill = () => this.audio.playClatter(0.6);
+    lamp.assembly.onBurst = () => this.audio.playShatter(2.2);
+    bag.assembly.onSpill = () => this.audio.playClatter(1.5);
     this.interaction.onHitAction = (action, _force) => {
       if (action === "poke") this.audio.playClatter(0.8);
       else if (action === "flick") this.audio.playClatter(1.4);
@@ -235,12 +256,93 @@ export class CupSandboxWorld {
             isBroken: this.cup.isBroken,
           };
         }
+        if (id === "plant") {
+          const plantItem = this.props.get("plant") as PlantProp | undefined;
+          return {
+            pos: plantItem?.assembly.potState === "shattered"
+              ? { x: 0, y: 0.05, z: 0 }
+              : { ...plantItem?.assembly.potBody.position },
+            vel: { ...plantItem?.assembly.potBody.velocity },
+            potState: plantItem?.assembly.potState,
+            soilState: plantItem?.assembly.soilState,
+            foliageState: plantItem?.assembly.foliageState,
+            soilRemainingMl: plantItem?.assembly.soilRemainingMl,
+            isBroken: plantItem?.assembly.potState === "shattered",
+          };
+        }
+        if (id === "lamp") {
+          const lampItem = this.props.get("lamp") as LampProp | undefined;
+          return {
+            pos: { ...lampItem?.assembly.shadeBody.position },
+            vel: { ...lampItem?.assembly.shadeBody.velocity },
+            bulbState: lampItem?.assembly.bulbState,
+            powerState: lampItem?.assembly.powerState,
+            isBroken: lampItem?.assembly.bulbState === "burst",
+          };
+        }
+        if (id === "bag") {
+          const bagItem = this.props.get("bag") as BagProp | undefined;
+          return {
+            pos: { ...bagItem?.assembly.baseBody.position },
+            vel: { ...bagItem?.assembly.baseBody.velocity },
+            mouthState: bagItem?.assembly.mouthState,
+            spillState: bagItem?.assembly.spillState,
+            containedCount: bagItem?.assembly.payloads.filter((p) => p.isContained).length ?? 0,
+            isBroken: bagItem?.assembly.isBroken ?? false,
+          };
+        }
         const p = this.props.get(id);
         return p
           ? { pos: { ...p.mesh.position }, vel: { ...p.body.velocity } }
           : null;
       },
       liftAndDrop: (y = 1.35, throwVy = -1.2) => {
+        if (this.activePropId === "plant") {
+          const plantItem = this.props.get("plant") as PlantProp | undefined;
+          if (plantItem?.assembly) {
+            plantItem.assembly.potBody.position.set(0, y, 0);
+            plantItem.assembly.potBody.velocity.set(0, throwVy, 0);
+            plantItem.assembly.potBody.wakeUp();
+            plantItem.assembly.rootBallBody.position.set(0, y + 0.02, 0);
+            plantItem.assembly.rootBallBody.velocity.set(0, throwVy, 0);
+            plantItem.assembly.rootBallBody.wakeUp();
+            plantItem.assembly.stemBody.position.set(0, y + 0.28, 0);
+            plantItem.assembly.stemBody.velocity.set(0, throwVy, 0);
+            plantItem.assembly.stemBody.wakeUp();
+            return;
+          }
+        }
+        if (this.activePropId === "lamp") {
+          const lampItem = this.props.get("lamp") as LampProp | undefined;
+          if (lampItem?.assembly) {
+            lampItem.assembly.shadeBody.position.set(0, y, 0);
+            lampItem.assembly.shadeBody.velocity.set(0, throwVy, 0);
+            lampItem.assembly.shadeBody.wakeUp();
+            lampItem.assembly.bulbBody.position.set(0, y - 0.02, 0);
+            lampItem.assembly.bulbBody.velocity.set(0, throwVy, 0);
+            lampItem.assembly.bulbBody.wakeUp();
+            return;
+          }
+        }
+        if (this.activePropId === "bag") {
+          const bagItem = this.props.get("bag") as BagProp | undefined;
+          if (bagItem?.assembly) {
+            bagItem.assembly.baseBody.position.set(0, y - 0.10, 0);
+            bagItem.assembly.baseBody.velocity.set(0, throwVy, 0);
+            bagItem.assembly.baseBody.wakeUp();
+            bagItem.assembly.upperBody.position.set(0, y + 0.06, 0);
+            bagItem.assembly.upperBody.velocity.set(0, throwVy, 0);
+            bagItem.assembly.upperBody.wakeUp();
+            for (const item of bagItem.assembly.payloads) {
+              if (item.isContained) {
+                item.body.position.set(item.localPos.x, y + item.localPos.y, item.localPos.z);
+                item.body.velocity.set(0, throwVy, 0);
+                item.body.wakeUp();
+              }
+            }
+            return;
+          }
+        }
         const body = this.getActiveBody();
         body.position.set(0, y, 0);
         body.velocity.set(0, throwVy, 0);
@@ -258,9 +360,55 @@ export class CupSandboxWorld {
         );
       },
       shatterFloor: () => {
-        this.cup.body.position.set(0.65, 0.9, 0);
-        this.cup.body.velocity.set(0.4, -3.4, 0);
-        this.cup.body.wakeUp();
+        if (this.activePropId === "plant") {
+          const plantItem = this.props.get("plant") as PlantProp | undefined;
+          if (plantItem?.assembly) {
+            plantItem.assembly.potBody.position.set(0.65, 0.9, 0);
+            plantItem.assembly.potBody.velocity.set(0.4, -3.4, 0);
+            plantItem.assembly.potBody.wakeUp();
+            plantItem.assembly.rootBallBody.position.set(0.65, 0.92, 0);
+            plantItem.assembly.rootBallBody.velocity.set(0.4, -3.4, 0);
+            plantItem.assembly.rootBallBody.wakeUp();
+            plantItem.assembly.stemBody.position.set(0.65, 1.18, 0);
+            plantItem.assembly.stemBody.velocity.set(0.4, -3.4, 0);
+            plantItem.assembly.stemBody.wakeUp();
+          }
+        } else if (this.activePropId === "lamp") {
+          const lampItem = this.props.get("lamp") as LampProp | undefined;
+          if (lampItem?.assembly) {
+            lampItem.assembly.shadeBody.position.set(0.65, 0.98, 0);
+            lampItem.assembly.shadeBody.velocity.set(0.4, -3.4, 0);
+            lampItem.assembly.shadeBody.wakeUp();
+            lampItem.assembly.bulbBody.position.set(0.65, 0.90, 0);
+            lampItem.assembly.bulbBody.velocity.set(0.4, -3.4, 0);
+            lampItem.assembly.bulbBody.wakeUp();
+            for (let i = 0; i < lampItem.assembly.cordBodies.length; i++) {
+              const cb = lampItem.assembly.cordBodies[i];
+              cb.position.set(0.65, 1.05 + i * 0.1, 0);
+              cb.velocity.set(0.4, -3.4, 0);
+              cb.wakeUp();
+            }
+          }
+        } else if (this.activePropId === "bag") {
+          const bagItem = this.props.get("bag") as BagProp | undefined;
+          if (bagItem?.assembly) {
+            bagItem.assembly.baseBody.position.set(0.65, 0.9, 0);
+            bagItem.assembly.baseBody.velocity.set(0.4, -3.4, 0);
+            bagItem.assembly.baseBody.wakeUp();
+            bagItem.assembly.upperBody.position.set(0.65, 1.06, 0);
+            bagItem.assembly.upperBody.velocity.set(0.4, -3.4, 0);
+            bagItem.assembly.upperBody.wakeUp();
+            for (const item of bagItem.assembly.payloads) {
+              item.body.position.set(0.65 + item.localPos.x, 0.95 + item.localPos.y, item.localPos.z);
+              item.body.velocity.set(0.4, -3.4, 0);
+              item.body.wakeUp();
+            }
+          }
+        } else {
+          this.cup.body.position.set(0.65, 0.9, 0);
+          this.cup.body.velocity.set(0.4, -3.4, 0);
+          this.cup.body.wakeUp();
+        }
       },
     };
 
@@ -297,6 +445,11 @@ export class CupSandboxWorld {
     }
   }
 
+  private getActiveTarget() {
+    if (this.activePropId === "cup") return this.cup;
+    return this.props.get(this.activePropId) ?? this.cup;
+  }
+
   private getActiveBody(): CANNON.Body {
     if (this.activePropId === "cup") return this.cup.body;
     return this.props.get(this.activePropId)?.body ?? this.cup.body;
@@ -324,19 +477,77 @@ export class CupSandboxWorld {
       const { bodyA, bodyB } = ev;
       const isCupA = bodyA === this.cup.body;
       const isCupB = bodyB === this.cup.body;
-      if (!isCupA && !isCupB) return;
+      if (isCupA || isCupB) {
+        const other = isCupA ? bodyB : bodyA;
+        const targetLabel = other === this.floorBody ? "floor" : other === this.counterBody ? "counter" : null;
+        if (targetLabel) {
+          // Calculate effective impact normal velocity
+          const normalVel = Math.abs(this.cup.body.velocity.y);
+          const totalSpeed = this.cup.body.velocity.length();
+          const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+          const normal = new THREE.Vector3(0, 1, 0);
 
-      const other = isCupA ? bodyB : bodyA;
-      const targetLabel = other === this.floorBody ? "floor" : other === this.counterBody ? "counter" : null;
-      if (!targetLabel) return;
+          this.fracture.checkCollision(this.cup, targetLabel, impactSpeed, normal, this.liquid);
+        }
+      }
 
-      // Calculate effective impact normal velocity
-      const normalVel = Math.abs(this.cup.body.velocity.y);
-      const totalSpeed = this.cup.body.velocity.length();
-      const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
-      const normal = new THREE.Vector3(0, 1, 0);
+      // Plant Pot contact check
+      const plantItem = this.props.get("plant") as PlantProp | undefined;
+      if (plantItem?.assembly && plantItem.assembly.potState !== "shattered") {
+        const isPlantA = bodyA === plantItem.assembly.potBody;
+        const isPlantB = bodyB === plantItem.assembly.potBody;
+        if (isPlantA || isPlantB) {
+          const other = isPlantA ? bodyB : bodyA;
+          const targetLabel = other === this.floorBody ? "floor" : other === this.counterBody ? "counter" : null;
+          if (targetLabel && !plantItem.assembly.isInternalBody(other)) {
+            const normalVel = Math.abs(plantItem.assembly.potBody.velocity.y);
+            const totalSpeed = plantItem.assembly.potBody.velocity.length();
+            const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+            const normal = new THREE.Vector3(0, 1, 0);
+            plantItem.assembly.checkCollision(impactSpeed, normal);
+          }
+        }
+      }
 
-      this.fracture.checkCollision(this.cup, targetLabel, impactSpeed, normal, this.liquid);
+      // Lamp Bulb & Shade contact check
+      const lampItem = this.props.get("lamp") as LampProp | undefined;
+      if (lampItem?.assembly) {
+        const isBulbA = bodyA === lampItem.assembly.bulbBody;
+        const isBulbB = bodyB === lampItem.assembly.bulbBody;
+        const isShadeA = bodyA === lampItem.assembly.shadeBody;
+        const isShadeB = bodyB === lampItem.assembly.shadeBody;
+        if (isBulbA || isBulbB || isShadeA || isShadeB) {
+          const other = (isBulbA || isShadeA) ? bodyB : bodyA;
+          const targetLabel = other === this.floorBody ? "floor" : other === this.counterBody ? "counter" : null;
+          if (targetLabel) {
+            const hitBody = (isBulbA || isBulbB) ? lampItem.assembly.bulbBody : lampItem.assembly.shadeBody;
+            const normalVel = Math.abs(hitBody.velocity.y);
+            const totalSpeed = hitBody.velocity.length();
+            const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+            const normal = new THREE.Vector3(0, 1, 0);
+            lampItem.assembly.checkCollision(impactSpeed, normal);
+          }
+        }
+      }
+
+      // Bag contact check
+      const bagItem = this.props.get("bag") as BagProp | undefined;
+      if (bagItem?.assembly) {
+        const isBagA = bodyA === bagItem.assembly.baseBody || bodyA === bagItem.assembly.upperBody;
+        const isBagB = bodyB === bagItem.assembly.baseBody || bodyB === bagItem.assembly.upperBody;
+        if (isBagA || isBagB) {
+          const other = isBagA ? bodyB : bodyA;
+          const targetLabel = other === this.floorBody ? "floor" : other === this.counterBody ? "counter" : null;
+          if (targetLabel) {
+            const hitBody = isBagA ? bodyA : bodyB;
+            const normalVel = Math.abs(hitBody.velocity.y);
+            const totalSpeed = hitBody.velocity.length();
+            const impactSpeed = Math.max(normalVel, totalSpeed * 0.8);
+            const normal = new THREE.Vector3(0, 1, 0);
+            bagItem.assembly.checkCollision(impactSpeed, normal);
+          }
+        }
+      }
     });
   }
 
@@ -344,22 +555,16 @@ export class CupSandboxWorld {
     const c = this.canvas;
     c.addEventListener("pointerdown", (e) => {
       this.audio.resume();
-      if (this.activePropId === "cup") {
-        this.interaction.onPointerDown(e.clientX, e.clientY, e.pointerId, this.cup);
-      }
+      this.interaction.onPointerDown(e.clientX, e.clientY, e.pointerId, this.getActiveTarget());
       c.setPointerCapture(e.pointerId);
     });
 
     c.addEventListener("pointermove", (e) => {
-      if (this.activePropId === "cup") {
-        this.interaction.onPointerMove(e.clientX, e.clientY, e.pointerId);
-      }
+      this.interaction.onPointerMove(e.clientX, e.clientY, e.pointerId);
     });
 
     const onRelease = (e: PointerEvent) => {
-      if (this.activePropId === "cup") {
-        this.interaction.onPointerUp(e.clientX, e.clientY, e.pointerId, this.cup);
-      }
+      this.interaction.onPointerUp(e.clientX, e.clientY, e.pointerId, this.getActiveTarget());
     };
 
     c.addEventListener("pointerup", onRelease);
@@ -378,11 +583,11 @@ export class CupSandboxWorld {
   }
 
   reset() {
+    this.interaction.cancel();
     if (this.activePropId === "cup") {
       this.fracture.reset();
       this.liquid.reset();
       this.cup.reset();
-      this.interaction.cancel();
     } else {
       this.props.get(this.activePropId)?.reset();
     }
@@ -395,9 +600,8 @@ export class CupSandboxWorld {
     this.lastTime = now;
 
     // Apply interaction spring forces before physics step
-    if (this.activePropId === "cup") {
-      this.interaction.updatePhysics(dt, this.cup);
-    }
+    const target = this.getActiveTarget();
+    this.interaction.updatePhysics(dt, target);
 
     // Fixed timestep physics stepping
     this.physics.step(this.fixedTimeStep, dt, this.maxSubSteps);

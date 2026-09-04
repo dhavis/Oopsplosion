@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import type { OfficeWorld, SimBody } from "./world";
 
 function hit(a: SimBody, b: SimBody, x: string, y: string) {
@@ -91,11 +92,23 @@ export class Chain {
       }
     }
     if (hit(a, b, "chair", "plant")) {
-      world.plantBroken = true;
+      const chair = a.label === "chair" ? a : b;
+      const speed = Math.hypot(chair.velocity.x, chair.velocity.y, chair.velocity.z);
+      if (speed >= 0.5) {
+        const norm = new THREE.Vector3(chair.velocity.x, 0.2, chair.velocity.z).normalize();
+        world.plantAssembly?.checkCollision(speed * 1.8, norm);
+      }
+      world.plantBroken = world.plantAssembly?.potState === "shattered" || world.plantAssembly?.foliageState === "uprooted";
       return "plant";
     }
     if (hit(a, b, "chair", "bag")) {
-      world.bagSpilled = true;
+      const chair = a.label === "chair" ? a : b;
+      const speed = Math.hypot(chair.velocity.x, chair.velocity.y, chair.velocity.z);
+      if (speed >= 0.4) {
+        const norm = new THREE.Vector3(chair.velocity.x, 0.1, chair.velocity.z).normalize();
+        world.bagAssembly?.checkCollision(speed * 1.5, norm);
+      }
+      world.bagSpilled = world.bagAssembly?.spillState === "spilled";
       return "bag";
     }
     return null;
