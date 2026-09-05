@@ -231,6 +231,7 @@ export class BagAssembly {
     thermosCap.position.y = 0.105;
     thermosMesh.add(thermosCap);
     thermosMesh.castShadow = true;
+    thermosMesh.visible = false;
     this.scene.add(thermosMesh);
     this.payloads.push({
       id: "thermos",
@@ -262,6 +263,7 @@ export class BagAssembly {
 
     const laptopMesh = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.02, 0.18), laptopMat);
     laptopMesh.castShadow = true;
+    laptopMesh.visible = false;
     this.scene.add(laptopMesh);
     this.payloads.push({
       id: "laptop",
@@ -289,6 +291,7 @@ export class BagAssembly {
 
     const notepadMesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.02, 0.12), notepadMat);
     notepadMesh.castShadow = true;
+    notepadMesh.visible = false;
     this.scene.add(notepadMesh);
     this.payloads.push({
       id: "notepad",
@@ -316,6 +319,7 @@ export class BagAssembly {
 
     const chargerMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 0.08), chargerMat);
     chargerMesh.castShadow = true;
+    chargerMesh.visible = false;
     this.scene.add(chargerMesh);
     this.payloads.push({
       id: "charger",
@@ -344,6 +348,7 @@ export class BagAssembly {
     const shirtMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.14, 12), shirtMat);
     shirtMesh.rotation.z = Math.PI / 2;
     shirtMesh.castShadow = true;
+    shirtMesh.visible = false;
     this.scene.add(shirtMesh);
     this.payloads.push({
       id: "shirt",
@@ -371,6 +376,7 @@ export class BagAssembly {
 
     const keysMesh = new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 12), keysMat);
     keysMesh.castShadow = true;
+    keysMesh.visible = false;
     this.scene.add(keysMesh);
     this.payloads.push({
       id: "keys",
@@ -657,7 +663,7 @@ export class BagAssembly {
   reset(initPos = new THREE.Vector3(0, 0.84, 0)) {
     this.group.visible = true;
     for (const item of this.payloads) {
-      item.mesh.visible = true;
+      item.mesh.visible = false;
     }
     this.mouthState = "ajar";
     this.poseState = "supported";

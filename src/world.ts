@@ -19,6 +19,7 @@ import { BagAssembly } from "./sandbox/BagAssembly";
 import { CupBody } from "./sandbox/CupBody";
 import { LiquidSimulation, LiquidSurface } from "./sandbox/LiquidSimulation";
 import { FractureSystem } from "./sandbox/FractureSystem";
+import { InteractiveTarget } from "./sandbox/CupInteraction";
 
 export type ObjLabel =
   | "printer"
@@ -446,6 +447,11 @@ export class OfficeWorld {
       if (PICKABLE.has(sim.label)) meshes.push(sim.mesh);
     }
     for (const p of this.papers) meshes.push(p.mesh);
+    if (this.bagAssembly) {
+      for (const p of this.bagAssembly.payloads) {
+        meshes.push(p.mesh);
+      }
+    }
     const hits = this.raycaster.intersectObjects(meshes, true);
     if (hits[0]) {
       let obj: THREE.Object3D | null = hits[0].object;
@@ -467,6 +473,67 @@ export class OfficeWorld {
       };
     }
     return null;
+  }
+
+  pickInteractiveTarget(clientX: number, clientY: number): InteractiveTarget | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const detail = this.pickDetail(clientX, clientY, rect);
+    if (!detail) return null;
+    const { sim, object } = detail;
+    const label = sim.label;
+
+    if (label === "cup" && this.cupBody) {
+      return {
+        body: this.cupBody.body,
+        mesh: this.cupBody.mesh,
+        label: "cup",
+        isBroken: this.cupBody.isBroken,
+      };
+    }
+    if (label === "plant" && this.plantAssembly) {
+      return {
+        body: this.plantAssembly.potBody,
+        mesh: this.plantAssembly.group,
+        assembly: this.plantAssembly,
+        label: "plant",
+        isBroken: this.plantAssembly.potState === "shattered",
+      };
+    }
+    if (label === "lamp" && this.lampAssembly) {
+      return {
+        body: this.lampAssembly.shadeBody,
+        mesh: this.lampAssembly.group,
+        assembly: this.lampAssembly,
+        label: "lamp",
+        isBroken: this.lampAssembly.isBroken,
+      };
+    }
+    if (label === "bag" && this.bagAssembly) {
+      for (const p of this.bagAssembly.payloads) {
+        if (p.mesh === object || object.parent === p.mesh) {
+          return {
+            body: p.body,
+            mesh: p.mesh,
+            label: "bag-item",
+            isBroken: false,
+          };
+        }
+      }
+      return {
+        body: this.bagAssembly.baseBody,
+        mesh: this.bagAssembly.group,
+        assembly: this.bagAssembly,
+        label: "bag",
+        isBroken: this.bagAssembly.isBroken,
+      };
+    }
+
+    return {
+      body: sim.body,
+      mesh: sim.mesh,
+      label,
+      isBroken: false,
+    };
   }
 
   impulse(body: SimBody, v: Vec3) {
@@ -1159,6 +1226,17 @@ export class OfficeWorld {
         COL.SOLID_PROP,
         COL.STATIC_ENV | COL.SOLID_PROP | COL.PAPER_SHEET | COL.MACHINE_BODY,
       );
+      const pSim = new SimBody("bag", p.body, p.mesh);
+      p.mesh.userData = { sim: pSim, body: p.body, label: "bag-item" };
+      p.mesh.traverse((c) => {
+        c.userData.sim = pSim;
+        c.userData.label = "bag-item";
+        if ((c as THREE.Mesh).isMesh) {
+          (c as THREE.Mesh).castShadow = true;
+          (c as THREE.Mesh).receiveShadow = true;
+        }
+      });
+      this.meshes.set(p.body, p.mesh);
     }
 
     const bagSim = new SimBody("bag", this.bagAssembly.baseBody, this.bagAssembly.group);
