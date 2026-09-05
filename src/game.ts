@@ -1,11 +1,14 @@
 import * as THREE from "three";
+import * as CANNON from "cannon-es";
 import { Foley } from "./audio";
 import { Chain } from "./chain";
 import { pixelRatio } from "./formFactors";
 import { pokeHaptic } from "./haptic";
 import { TestLayer } from "./testLayer";
 import { Chrome } from "./ui";
-import { OfficeWorld, type ObjLabel, type SimBody } from "./world";
+import { OfficeWorld, type ObjLabel } from "./world";
+import { CupInteraction } from "./sandbox/CupInteraction";
+import { POS, SIZE } from "./scale";
 
 type Phase = "boot" | "title" | "constraint" | "play" | "card";
 
@@ -14,18 +17,10 @@ export class Game {
   private chrome: Chrome;
   private audio = new Foley();
   private world!: OfficeWorld;
+  private interaction!: CupInteraction;
   private chain = new Chain();
   private phase: Phase = "boot";
   private phaseAt = 0;
-  private pointer: {
-    id: number;
-    x: number;
-    y: number;
-    ox: number;
-    oy: number;
-    t: number;
-    body: SimBody | null;
-  } | null = null;
   private playerHits = new Set<string>();
   private extraWrecks = new Set<string>();
   private fuse: string | null = null;
@@ -37,6 +32,7 @@ export class Game {
   private worldBorn = 0;
   private resetBtn: HTMLButtonElement | null;
   private test: TestLayer;
+  private lastFrame = performance.now();
 
   constructor(canvas: HTMLCanvasElement, chromeRoot: HTMLElement) {
     this.canvas = canvas;
@@ -108,6 +104,7 @@ export class Game {
   }
 
   private resetWorld() {
+    this.interaction?.destroy();
     this.world?.destroy();
     this.world = new OfficeWorld(this.canvas);
     this.layout();
@@ -120,6 +117,104 @@ export class Game {
     this.lastHit = 0;
     this.cupPokeAt = 0;
     this.worldBorn = performance.now();
+
+    this.interaction = new CupInteraction(
+      this.world.camera,
+      this.canvas,
+      this.world.scene,
+      {
+        minX: 0.05,
+        maxX: 2.75,
+        minY: 0.02,
+        maxY: 2.15,
+        minZ: -0.10,
+        maxZ: 2.30,
+        counterY: SIZE.desk.h,
+        counterMinX: POS.desk.x - SIZE.desk.w / 2,
+        counterMaxX: POS.desk.x + SIZE.desk.w / 2,
+        counterMinZ: POS.desk.z - SIZE.desk.d / 2,
+        counterMaxZ: POS.desk.z + SIZE.desk.d / 2,
+      },
+    );
+
+    this.interaction.onHitAction = (action, _force, target, hitLabel) => {
+      const label = (hitLabel ?? target.label) as ObjLabel | undefined;
+      if (!label) return;
+
+      this.playerHits.add(label);
+      this.lastHit = performance.now();
+      if (!this.fuse) this.fuse = label;
+      else if (label !== this.fuse) this.extraWrecks.add(label);
+
+      pokeHaptic(label === "chair" || label === "plant" ? "heavy" : "medium");
+
+      if (action === "poke") {
+        if (label === "cup") {
+          this.audio.slosh();
+          if (!this.cupPokeAt) this.cupPokeAt = performance.now();
+          this.chain.startCoffee(this.world, performance.now());
+        } else if (label === "lamp") {
+          this.audio.tick();
+          this.chain.startLamp(this.world, performance.now());
+        } else if (label === "phone") {
+          this.audio.tick();
+          this.chain.startPhone(this.world, performance.now());
+        } else if (label === "jam") {
+          this.audio.paper();
+          this.world.yankJam();
+          this.chain.startJam(this.world, performance.now());
+        } else if (label === "plant") {
+          this.audio.plant();
+        } else if (label === "bag") {
+          this.audio.thud(0.8);
+        } else if (label === "fan") {
+          this.audio.paper();
+          this.world.fanBlow();
+        } else if (label === "printer") {
+          this.audio.grind();
+        } else if (label === "copier") {
+          this.audio.thud(2);
+        } else if (label === "chair") {
+          this.audio.thud(1.2);
+        }
+      } else if (action === "flick") {
+        if (label === "cup") {
+          this.audio.slosh();
+          if (!this.cupPokeAt) this.cupPokeAt = performance.now();
+          this.chain.startCoffee(this.world, performance.now());
+        } else if (label === "lamp") {
+          this.audio.tick();
+          this.chain.startLamp(this.world, performance.now());
+        } else if (label === "phone") {
+          this.audio.tick();
+          this.chain.startPhone(this.world, performance.now());
+        } else if (label === "jam") {
+          this.audio.paper();
+          this.world.yankJam();
+          this.chain.startJam(this.world, performance.now());
+        } else if (label === "plant") {
+          this.audio.plant();
+        } else if (label === "bag") {
+          this.audio.thud(1.2);
+        } else if (label === "fan") {
+          this.audio.paper();
+          this.world.fanBlow();
+        } else if (label === "chair") {
+          this.audio.thud(1.5);
+        }
+      } else if (action === "release") {
+        if (label === "cup") {
+          this.audio.slosh();
+        } else if (label === "plant") {
+          this.audio.plant();
+        } else if (label === "chair") {
+          this.audio.thud(0.6);
+        }
+      }
+
+      this.test?.notifyHit(label, action);
+    };
+
     this.world.onCoffeePour = () => this.audio.slosh();
     this.world.onShortCircuit = () => {
       this.chain.link("wet>short");
@@ -176,155 +271,40 @@ export class Game {
         this.enter("play");
         return;
       }
-      const body = this.world.pick(e.clientX, e.clientY, c.getBoundingClientRect());
-      this.pointer = {
-        id: e.pointerId,
-        x: e.clientX,
-        y: e.clientY,
-        ox: e.clientX,
-        oy: e.clientY,
-        t: performance.now(),
-        body,
-      };
-      c.setPointerCapture(e.pointerId);
+      if (this.phase === "play" || this.phase === "card") {
+        const target = this.world.pickInteractiveTarget(e.clientX, e.clientY);
+        if (!target) {
+          this.showMiss();
+        } else {
+          this.interaction.onPointerDown(
+            e.clientX,
+            e.clientY,
+            e.pointerId,
+            target,
+          );
+          c.setPointerCapture(e.pointerId);
+        }
+      }
     });
     c.addEventListener("pointermove", (e) => {
-      if (!this.pointer || this.pointer.id !== e.pointerId) return;
-      this.pointer.x = e.clientX;
-      this.pointer.y = e.clientY;
+      if (this.phase === "play" || this.phase === "card") {
+        this.interaction.onPointerMove(e.clientX, e.clientY, e.pointerId);
+      }
     });
-    c.addEventListener("pointerup", (e) => this.release(e));
-    c.addEventListener("pointercancel", (e) => this.release(e));
+    c.addEventListener("pointerup", (e) => {
+      if (this.phase === "play" || this.phase === "card") {
+        this.interaction.onPointerUp(e.clientX, e.clientY, e.pointerId);
+      }
+    });
+    c.addEventListener("pointercancel", (e) => {
+      if (this.phase === "play" || this.phase === "card") {
+        this.interaction.onPointerUp(e.clientX, e.clientY, e.pointerId);
+      }
+    });
     window.addEventListener("resize", () => this.layout());
     window.addEventListener("orientationchange", () => this.layout());
     window.visualViewport?.addEventListener("resize", () => this.layout());
     this.layout();
-  }
-
-  private release(e: PointerEvent) {
-    if (!this.pointer || this.pointer.id !== e.pointerId) return;
-    const start = this.pointer;
-    this.pointer = null;
-    if (this.phase !== "play" && this.phase !== "card") return;
-    const rect = this.canvas.getBoundingClientRect();
-    const body = start.body ?? this.world.pick(e.clientX, e.clientY, rect);
-    if (!body) {
-      this.showMiss();
-      return;
-    }
-    const dx = (e.clientX - start.ox) / rect.width;
-    const dy = (e.clientY - start.oy) / rect.height;
-    const dist = Math.hypot(dx, dy);
-    const poke = dist < 0.04;
-    this.hit(body, poke ? 0 : dx, poke ? 0 : dy, poke);
-  }
-
-  private hit(body: SimBody, dx: number, dy: number, poke: boolean): string {
-    const label = body.label;
-    this.playerHits.add(label);
-    this.lastHit = performance.now();
-    if (!this.fuse) this.fuse = label;
-    else if (label !== this.fuse) this.extraWrecks.add(label);
-
-    this.audio.tick();
-    pokeHaptic(label === "chair" || label === "plant" ? "heavy" : "medium");
-    let note = "moved";
-
-    if (label === "printer") {
-      this.audio.grind();
-      note = "lame beep";
-      this.test?.notifyHit(label, note);
-      return note;
-    }
-    if (label === "copier") {
-      this.audio.thud(2);
-      if (this.chain.punchline) {
-        this.chain.copierPage = Math.min(847, this.chain.copierPage + 2);
-        this.world.copierPage = this.chain.copierPage;
-      }
-      note = this.chain.punchline ? "punchline already up" : "thud, no 847";
-      this.test?.notifyHit(label, note);
-      return note;
-    }
-    if (label === "fan") {
-      this.world.fanBlow();
-      note = "rattle";
-      this.test?.notifyHit(label, note);
-      return note;
-    }
-    if (label === "plant") {
-      if (poke) {
-        this.world.plantAssembly?.pokeFoliage(
-          new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.15, (Math.random() - 0.5) * 0.4),
-        );
-      } else {
-        this.world.plantAssembly?.pokePot(
-          new THREE.Vector3(dx * 2.5, 0.2, -dy * 2.5),
-        );
-      }
-      this.audio.plant();
-      note = "sway";
-    }
-    if (label === "bag") {
-      if (poke) {
-        this.world.bagAssembly?.pokeHandle(
-          0,
-          new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.25, (Math.random() - 0.5) * 0.4),
-        );
-      } else {
-        this.world.bagAssembly?.pokePanel(
-          new THREE.Vector3(dx * 2.5, 0.2, -dy * 2.5),
-        );
-      }
-      this.world.bagSpilled = this.world.bagAssembly?.spillState === "spilled";
-      note = "vent";
-    }
-
-    if (label === "cup") {
-      body.body.linearDamping = 0.20;
-      body.body.angularDamping = 0.45;
-      body.body.wakeUp();
-      const towardPrinter = poke || dy < -0.02;
-      if (towardPrinter) {
-        this.world.dumpCupIntoPrinter();
-        this.audio.slosh();
-        if (!this.cupPokeAt) this.cupPokeAt = performance.now();
-        const before = this.chain.events.length;
-        this.chain.startCoffee(this.world, performance.now());
-        if (this.chain.events.length > before) {
-          this.audio.grind();
-          this.noteChain();
-        }
-        note = "coffee into printer";
-      } else {
-        this.world.impulse(body, { x: dx * 1.5, y: -dy * 0.8, z: 0.25 });
-        body.body.angularVelocity.set(1.5, dx * 3, 2);
-        note = "vent";
-      }
-      this.test?.notifyHit(label, note);
-      return note;
-    }
-
-    if (poke) this.world.impulse(body, { x: (Math.random() - 0.5) * 0.15, y: 0.35, z: -0.08 });
-    else this.world.impulse(body, { x: dx * 3.2, y: -dy * 2.2, z: -Math.abs(dx) * 0.4 });
-
-    if (label === "lamp") {
-      this.chain.startLamp(this.world, performance.now());
-      note = "swing";
-    }
-    if (label === "phone") {
-      this.world.impulse(body, { x: poke ? 0.8 : Math.sign(dx || 1) * 1.1, y: 0.05, z: 0.35 });
-      this.chain.startPhone(this.world, performance.now());
-      note = "walk";
-    }
-    if (label === "jam") {
-      this.world.yankJam();
-      this.chain.startJam(this.world, performance.now());
-      note = "yank";
-    }
-    if (label === "chair") note = "mass";
-    this.test?.notifyHit(label, note);
-    return note;
   }
 
   private showMiss() {
@@ -345,8 +325,12 @@ export class Game {
   private frame = () => {
     if (!this.running) return;
     const now = performance.now();
+    const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+
     this.advancePhase(now);
 
+    this.interaction?.updatePhysics(dt);
     this.world.timeScale = this.chain.playing ? 0.42 : 1;
     if (!this.world.breakerPopped) {
       this.world.fanSpin = this.chain.playing || this.chain.paperFan ? 28 : 14;
@@ -485,7 +469,103 @@ export class Game {
 
   private probe(id: string): string {
     if (this.phase !== "play" && this.phase !== "card") this.skipToPlay();
-    return this.hit(this.world.get(id as ObjLabel), 0, 0, true);
+    const sim = this.world.get(id as ObjLabel);
+    if (!sim) return "missing";
+
+    this.playerHits.add(id);
+    this.lastHit = performance.now();
+    if (!this.fuse) this.fuse = id;
+    else if (id !== this.fuse) this.extraWrecks.add(id);
+
+    if (id === "cup") {
+      this.world.cupBody.body.wakeUp();
+      this.world.cupBody.body.applyImpulse(
+        new CANNON.Vec3(
+          0.42 * this.world.cupBody.body.mass,
+          0.20 * this.world.cupBody.body.mass,
+          -0.48 * this.world.cupBody.body.mass,
+        ),
+        this.world.cupBody.body.position,
+      );
+      this.audio.slosh();
+      if (!this.cupPokeAt) this.cupPokeAt = performance.now();
+      const before = this.chain.events.length;
+      this.chain.startCoffee(this.world, performance.now());
+      if (this.chain.events.length > before) {
+        this.audio.grind();
+        this.noteChain();
+      }
+      const note = "coffee into printer";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "plant") {
+      this.world.plantAssembly?.pokeFoliage(
+        new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.15, (Math.random() - 0.5) * 0.4),
+      );
+      this.audio.plant();
+      const note = "sway";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "bag") {
+      this.world.bagAssembly?.pokeHandle(
+        0,
+        new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.25, (Math.random() - 0.5) * 0.4),
+      );
+      this.audio.thud(0.8);
+      const note = "vent";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "lamp") {
+      this.world.lampAssembly?.pokeShade(new THREE.Vector3(-0.4, 0.1, 0.6));
+      this.chain.startLamp(this.world, performance.now());
+      const note = "swing";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "phone") {
+      this.world.impulse(sim, { x: 0.8, y: 0.05, z: 0.35 });
+      this.chain.startPhone(this.world, performance.now());
+      const note = "walk";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "jam") {
+      this.world.yankJam();
+      this.chain.startJam(this.world, performance.now());
+      const note = "yank";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "fan") {
+      this.world.fanBlow();
+      const note = "rattle";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "printer") {
+      this.audio.grind();
+      const note = "lame beep";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "copier") {
+      this.audio.thud(2);
+      const note = "thud, no 847";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    if (id === "chair") {
+      this.world.impulse(sim, { x: 1.2, y: 0, z: -0.8 });
+      const note = "mass";
+      this.test?.notifyHit(id, note);
+      return note;
+    }
+    const note = "moved";
+    this.test?.notifyHit(id, note);
+    return note;
   }
 
   private noteChain() {
@@ -500,6 +580,7 @@ export class Game {
 
   destroy() {
     this.running = false;
+    this.interaction?.destroy();
     this.world?.destroy();
   }
 }

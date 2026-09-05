@@ -10,18 +10,35 @@ export interface InteractiveTarget {
   mesh: THREE.Object3D;
   assembly?: PottedPlantAssembly | LampAssembly | BagAssembly;
   isBroken?: boolean;
+  label?: string;
+}
+
+export interface InteractionBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+  counterY?: number;
+  counterMinX?: number;
+  counterMaxX?: number;
+  counterMinZ?: number;
+  counterMaxZ?: number;
 }
 
 export class CupInteraction {
   private camera: THREE.PerspectiveCamera;
   private canvas: HTMLCanvasElement;
   private scene: THREE.Scene;
+  private bounds?: InteractionBounds;
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private dragPlane = new THREE.Plane();
   private isDragging = false;
   private pointerId: number | null = null;
+  private activeTarget: InteractiveTarget | null = null;
   private activeBody: CANNON.Body | null = null;
   private isFoliageHit = false;
   private isBulbHit = false;
@@ -43,12 +60,23 @@ export class CupInteraction {
   // Visual drag indicator
   private grabIndicator: THREE.Mesh;
 
-  onHitAction?: (action: "poke" | "flick" | "release", force: number) => void;
+  onHitAction?: (
+    action: "poke" | "flick" | "release",
+    force: number,
+    target: InteractiveTarget,
+    hitLabel?: string,
+  ) => void;
 
-  constructor(camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement, scene: THREE.Scene) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    canvas: HTMLCanvasElement,
+    scene: THREE.Scene,
+    bounds?: InteractionBounds,
+  ) {
     this.camera = camera;
     this.canvas = canvas;
     this.scene = scene;
+    this.bounds = bounds;
 
     // Subtle grab reticle
     const ringGeo = new THREE.RingGeometry(0.012, 0.016, 24);
@@ -65,8 +93,20 @@ export class CupInteraction {
     this.scene.add(this.grabIndicator);
   }
 
-  onPointerDown(clientX: number, clientY: number, pointerId: number, target: InteractiveTarget) {
-    if (target.isBroken) return;
+  onPointerDown(
+    clientX: number,
+    clientY: number,
+    pointerId: number,
+    targetOrFinder:
+      | InteractiveTarget
+      | ((clientX: number, clientY: number) => InteractiveTarget | null),
+  ) {
+    const target =
+      typeof targetOrFinder === "function"
+        ? targetOrFinder(clientX, clientY)
+        : targetOrFinder;
+
+    if (!target || target.isBroken) return;
 
     const rect = this.canvas.getBoundingClientRect();
     this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -81,6 +121,7 @@ export class CupInteraction {
       this.lastHitWorld.copy(hitPoint);
       this.initialHitDistance = hit.distance;
 
+      this.activeTarget = target;
       this.isDragging = true;
       this.pointerId = pointerId;
       this.dragStartTime = performance.now();
@@ -93,27 +134,30 @@ export class CupInteraction {
       this.isBagHandleHit = false;
 
       if (target.assembly instanceof PottedPlantAssembly) {
-        if (hitPoint.y >= 0.98) {
+        const potPos = target.assembly.potBody.position;
+        if (hitPoint.y - potPos.y >= 0.10) {
           hitBody = target.assembly.stemBody;
           this.isFoliageHit = true;
         } else {
           hitBody = target.assembly.potBody;
         }
       } else if (target.assembly instanceof LampAssembly) {
-        if (hitPoint.y < 1.05 && target.assembly.bulbState !== "burst") {
+        const shadePos = target.assembly.shadeBody.position;
+        if (hitPoint.y - shadePos.y < -0.01 && target.assembly.bulbState !== "burst") {
           hitBody = target.assembly.bulbBody;
           this.isBulbHit = true;
-        } else if (hitPoint.y > 1.25 && target.assembly.cordBodies.length > 0) {
+        } else if (hitPoint.y - shadePos.y > 0.08 && target.assembly.cordBodies.length > 0) {
           hitBody = target.assembly.cordBodies[Math.floor(target.assembly.cordBodies.length / 2)];
         } else {
           hitBody = target.assembly.shadeBody;
         }
       } else if (target.assembly instanceof BagAssembly) {
-        if (hitPoint.y > 1.00 && target.assembly.handleBodies.length > 0) {
-          this.bagHandleIdx = hitPoint.x < 0 ? 0 : 1;
+        const basePos = target.assembly.baseBody.position;
+        if (hitPoint.y - basePos.y > 0.20 && target.assembly.handleBodies.length > 0) {
+          this.bagHandleIdx = (hitPoint.x - basePos.x) < 0 ? 0 : 1;
           hitBody = target.assembly.handleBodies[this.bagHandleIdx];
           this.isBagHandleHit = true;
-        } else if (hitPoint.y > 0.86) {
+        } else if (hitPoint.y - basePos.y > 0.06) {
           hitBody = target.assembly.upperBody;
         } else {
           hitBody = target.assembly.baseBody;
@@ -158,24 +202,40 @@ export class CupInteraction {
     this.raycaster.setFromCamera(this.ndc, this.camera);
     const target = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.dragPlane, target)) {
-      // Counter boundaries
-      const counterY = SANDBOX_ROOM.counterPos.y + SANDBOX_ROOM.counter.h / 2; // 0.80
-      const counterHalfW = SANDBOX_ROOM.counter.w / 2 + 0.05;
-      const counterHalfD = SANDBOX_ROOM.counter.d / 2 + 0.05;
+      if (this.bounds?.counterY !== undefined && this.bounds.counterMinX !== undefined) {
+        const overCounter =
+          target.x >= this.bounds.counterMinX &&
+          target.x <= (this.bounds.counterMaxX ?? this.bounds.counterMinX) &&
+          target.z >= (this.bounds.counterMinZ ?? -5) &&
+          target.z <= (this.bounds.counterMaxZ ?? 5);
+        if (overCounter) {
+          target.y = Math.max(this.bounds.counterY + 0.04, target.y);
+        }
+      } else {
+        const counterY = SANDBOX_ROOM.counterPos.y + SANDBOX_ROOM.counter.h / 2; // 0.80
+        const counterHalfW = SANDBOX_ROOM.counter.w / 2 + 0.05;
+        const counterHalfD = SANDBOX_ROOM.counter.d / 2 + 0.05;
 
-      const overCounter =
-        Math.abs(target.x - SANDBOX_ROOM.counterPos.x) <= counterHalfW &&
-        Math.abs(target.z - SANDBOX_ROOM.counterPos.z) <= counterHalfD;
+        const overCounter =
+          Math.abs(target.x - SANDBOX_ROOM.counterPos.x) <= counterHalfW &&
+          Math.abs(target.z - SANDBOX_ROOM.counterPos.z) <= counterHalfD;
 
-      if (overCounter) {
-        target.y = Math.max(counterY + 0.04, target.y);
+        if (overCounter) {
+          target.y = Math.max(counterY + 0.04, target.y);
+        }
       }
-      target.y = Math.max(0.04, target.y);
+
+      const minX = this.bounds?.minX ?? -1.5;
+      const maxX = this.bounds?.maxX ?? 1.5;
+      const minY = this.bounds?.minY ?? 0.05;
+      const maxY = this.bounds?.maxY ?? 2.2;
+      const minZ = this.bounds?.minZ ?? -1.2;
+      const maxZ = this.bounds?.maxZ ?? 1.2;
 
       // Bound within viewable space
-      target.x = THREE.MathUtils.clamp(target.x, -1.5, 1.5);
-      target.y = THREE.MathUtils.clamp(target.y, 0.05, 2.2);
-      target.z = THREE.MathUtils.clamp(target.z, -1.2, 1.2);
+      target.x = THREE.MathUtils.clamp(target.x, minX, maxX);
+      target.y = THREE.MathUtils.clamp(target.y, minY, maxY);
+      target.z = THREE.MathUtils.clamp(target.z, minZ, maxZ);
 
       this.targetWorldPoint.copy(target);
       this.grabIndicator.position.copy(target);
@@ -183,14 +243,23 @@ export class CupInteraction {
     }
   }
 
-  onPointerUp(_clientX: number, _clientY: number, pointerId: number, target: InteractiveTarget) {
+  onPointerUp(
+    _clientX: number,
+    _clientY: number,
+    pointerId: number,
+    targetArg?: InteractiveTarget,
+  ) {
     if (!this.isDragging || this.pointerId !== pointerId) return;
 
     this.isDragging = false;
     this.grabIndicator.visible = false;
     this.pointerId = null;
 
-    if (target.isBroken) return;
+    const target = this.activeTarget ?? targetArg;
+    if (!target || target.isBroken) {
+      this.activeTarget = null;
+      return;
+    }
 
     const body = this.activeBody ?? target.body;
     const dragDuration = performance.now() - this.dragStartTime;
@@ -215,10 +284,10 @@ export class CupInteraction {
     if (dragDuration < 160 && pixelSpeed < 180) {
       const rayDir = new THREE.Vector3();
       this.camera.getWorldDirection(rayDir);
-      
+
       const pushDir = new THREE.Vector3(rayDir.x, 0.08, rayDir.z).normalize();
       const impulseMag = (this.isFoliageHit ? 0.35 : 0.22) * body.mass;
-      
+
       if (this.isFoliageHit && target.assembly instanceof PottedPlantAssembly) {
         target.assembly.pokeFoliage(
           new THREE.Vector3(pushDir.x * impulseMag, pushDir.y * impulseMag, pushDir.z * impulseMag),
@@ -251,7 +320,8 @@ export class CupInteraction {
           contactWorld,
         );
       }
-      this.onHitAction?.("poke", impulseMag);
+      this.onHitAction?.("poke", impulseMag, target, target.label);
+      this.activeTarget = null;
       return;
     }
 
@@ -271,7 +341,7 @@ export class CupInteraction {
       // Clamp speed realistically to prevent flying off-screen
       worldSwipe.clampLength(0.3, CUP_SPEC.maxGestureDeltaV);
       worldSwipe.y = Math.min(CUP_SPEC.maxGestureUpwardV, Math.max(-2.0, worldSwipe.y));
-      
+
       // Calculate 3D impulse J = m * deltaV
       const impulse = worldSwipe.clone().multiplyScalar(body.mass);
       if (this.isFoliageHit && target.assembly instanceof PottedPlantAssembly) {
@@ -292,7 +362,8 @@ export class CupInteraction {
           contactWorld,
         );
       }
-      this.onHitAction?.("flick", impulse.length());
+      this.onHitAction?.("flick", impulse.length(), target, target.label);
+      this.activeTarget = null;
       return;
     }
 
@@ -305,11 +376,13 @@ export class CupInteraction {
     if (body.velocity.y > CUP_SPEC.maxGestureUpwardV) {
       body.velocity.y = CUP_SPEC.maxGestureUpwardV;
     }
-    this.onHitAction?.("release", body.velocity.length());
+    this.onHitAction?.("release", body.velocity.length(), target, target.label);
+    this.activeTarget = null;
   }
 
-  updatePhysics(dt: number, target: InteractiveTarget) {
-    if (!this.isDragging || target.isBroken || dt <= 0) return;
+  updatePhysics(dt: number, targetArg?: InteractiveTarget) {
+    const target = this.activeTarget ?? targetArg;
+    if (!this.isDragging || !target || target.isBroken || dt <= 0) return;
 
     const body = this.activeBody ?? target.body;
 
@@ -357,5 +430,13 @@ export class CupInteraction {
     this.grabIndicator.visible = false;
     this.pointerId = null;
     this.activeBody = null;
+    this.activeTarget = null;
+  }
+
+  destroy() {
+    this.cancel();
+    this.scene.remove(this.grabIndicator);
+    this.grabIndicator.geometry.dispose();
+    (this.grabIndicator.material as THREE.Material).dispose();
   }
 }
