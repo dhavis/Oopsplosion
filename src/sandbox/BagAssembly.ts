@@ -85,7 +85,7 @@ export class BagAssembly {
     world: CANNON.World,
     scene: THREE.Scene,
     material: CANNON.Material,
-    initPos = new THREE.Vector3(0, 0.88, 0),
+    initPos = new THREE.Vector3(0, 0.84, 0),
     startsZipped = false,
   ) {
     this.world = world;
@@ -97,28 +97,28 @@ export class BagAssembly {
     this.baseBody = new CANNON.Body({
       mass: BAG_SPEC.baseMass,
       material,
-      linearDamping: 0.15,
-      angularDamping: 0.35,
+      linearDamping: 0.20,
+      angularDamping: 0.40,
       allowSleep: true,
     });
     this.baseBody.addShape(new CANNON.Box(new CANNON.Vec3(0.18, 0.04, 0.10)));
     this.baseBody.collisionFilterGroup = SANDBOX_COL.CUP;
     this.baseBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
-    this.baseBody.position.set(initPos.x, initPos.y - 0.10, initPos.z);
+    this.baseBody.position.set(initPos.x, initPos.y, initPos.z);
     this.world.addBody(this.baseBody);
 
     // 2. Articulated Upper Slouch Body
     this.upperBody = new CANNON.Body({
       mass: BAG_SPEC.upperMass,
       material,
-      linearDamping: 0.20,
-      angularDamping: 0.50,
+      linearDamping: 0.25,
+      angularDamping: 0.55,
       allowSleep: true,
     });
     this.upperBody.addShape(new CANNON.Box(new CANNON.Vec3(0.17, 0.11, 0.09)));
     this.upperBody.collisionFilterGroup = SANDBOX_COL.CUP;
     this.upperBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
-    this.upperBody.position.set(initPos.x, initPos.y + 0.06, initPos.z);
+    this.upperBody.position.set(initPos.x, initPos.y + 0.15, initPos.z);
     this.world.addBody(this.upperBody);
 
     // 3. Flexible Handles (4 segment bodies: 2 for front loop, 2 for back loop)
@@ -127,8 +127,8 @@ export class BagAssembly {
       const b = new CANNON.Body({
         mass: handleSegMass,
         material,
-        linearDamping: 0.25,
-        angularDamping: 0.55,
+        linearDamping: 0.30,
+        angularDamping: 0.60,
         allowSleep: true,
       });
       b.addShape(new CANNON.Sphere(0.012));
@@ -136,7 +136,7 @@ export class BagAssembly {
       b.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP;
       const side = i < 2 ? -0.06 : 0.06;
       const xOff = (i % 2 === 0 ? -0.08 : 0.08);
-      b.position.set(initPos.x + xOff, initPos.y + 0.22, initPos.z + side);
+      b.position.set(initPos.x + xOff, initPos.y + 0.28, initPos.z + side);
       this.world.addBody(b);
       this.handleBodies.push(b);
     }
@@ -213,14 +213,14 @@ export class BagAssembly {
     const thermosBody = new CANNON.Body({
       mass: BAG_SPEC.thermosMass,
       material: this.material,
-      linearDamping: 0.12,
-      angularDamping: 0.30,
+      linearDamping: 0.15,
+      angularDamping: 0.35,
       allowSleep: true,
     });
     thermosBody.addShape(new CANNON.Cylinder(0.035, 0.035, 0.20, 14));
-    thermosBody.position.set(initPos.x - 0.08, initPos.y + 0.04, initPos.z);
-    thermosBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    thermosBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    thermosBody.position.set(initPos.x - 0.08, initPos.y + 0.075, initPos.z);
+    thermosBody.collisionFilterGroup = 1 << 7;
+    thermosBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(thermosBody);
 
     const thermosMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.20, 16), thermosMat);
@@ -237,7 +237,7 @@ export class BagAssembly {
       name: "Stainless Thermos",
       body: thermosBody,
       mesh: thermosMesh,
-      localPos: new THREE.Vector3(-0.08, 0.04, 0),
+      localPos: new THREE.Vector3(-0.08, 0.075, 0),
       isContained: true,
     });
 
@@ -250,14 +250,14 @@ export class BagAssembly {
     const laptopBody = new CANNON.Body({
       mass: BAG_SPEC.laptopMass,
       material: this.material,
-      linearDamping: 0.18,
-      angularDamping: 0.40,
+      linearDamping: 0.20,
+      angularDamping: 0.45,
       allowSleep: true,
     });
     laptopBody.addShape(new CANNON.Box(new CANNON.Vec3(0.13, 0.01, 0.09)));
-    laptopBody.position.set(initPos.x + 0.02, initPos.y + 0.05, initPos.z - 0.03);
-    laptopBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    laptopBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    laptopBody.position.set(initPos.x + 0.02, initPos.y - 0.015, initPos.z - 0.03);
+    laptopBody.collisionFilterGroup = 1 << 7;
+    laptopBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(laptopBody);
 
     const laptopMesh = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.02, 0.18), laptopMat);
@@ -268,7 +268,7 @@ export class BagAssembly {
       name: "Work Laptop",
       body: laptopBody,
       mesh: laptopMesh,
-      localPos: new THREE.Vector3(0.02, 0.05, -0.03),
+      localPos: new THREE.Vector3(0.02, -0.015, -0.03),
       isContained: true,
     });
 
@@ -277,14 +277,14 @@ export class BagAssembly {
     const notepadBody = new CANNON.Body({
       mass: BAG_SPEC.notepadMass,
       material: this.material,
-      linearDamping: 0.20,
+      linearDamping: 0.22,
       angularDamping: 0.45,
       allowSleep: true,
     });
     notepadBody.addShape(new CANNON.Box(new CANNON.Vec3(0.09, 0.01, 0.06)));
-    notepadBody.position.set(initPos.x + 0.03, initPos.y + 0.02, initPos.z + 0.03);
-    notepadBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    notepadBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    notepadBody.position.set(initPos.x + 0.03, initPos.y + 0.005, initPos.z + 0.03);
+    notepadBody.collisionFilterGroup = 1 << 7;
+    notepadBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(notepadBody);
 
     const notepadMesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.02, 0.12), notepadMat);
@@ -295,7 +295,7 @@ export class BagAssembly {
       name: "Notepad",
       body: notepadBody,
       mesh: notepadMesh,
-      localPos: new THREE.Vector3(0.03, 0.02, 0.03),
+      localPos: new THREE.Vector3(0.03, 0.005, 0.03),
       isContained: true,
     });
 
@@ -309,9 +309,9 @@ export class BagAssembly {
       allowSleep: true,
     });
     chargerBody.addShape(new CANNON.Box(new CANNON.Vec3(0.04, 0.025, 0.04)));
-    chargerBody.position.set(initPos.x + 0.09, initPos.y - 0.02, initPos.z);
-    chargerBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    chargerBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    chargerBody.position.set(initPos.x + 0.09, initPos.y, initPos.z);
+    chargerBody.collisionFilterGroup = 1 << 7;
+    chargerBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(chargerBody);
 
     const chargerMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 0.08), chargerMat);
@@ -322,7 +322,7 @@ export class BagAssembly {
       name: "Power Adapter",
       body: chargerBody,
       mesh: chargerMesh,
-      localPos: new THREE.Vector3(0.09, -0.02, 0),
+      localPos: new THREE.Vector3(0.09, 0, 0),
       isContained: true,
     });
 
@@ -336,9 +336,9 @@ export class BagAssembly {
       allowSleep: true,
     });
     shirtBody.addShape(new CANNON.Cylinder(0.04, 0.04, 0.14, 10));
-    shirtBody.position.set(initPos.x - 0.02, initPos.y - 0.02, initPos.z + 0.02);
-    shirtBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    shirtBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    shirtBody.position.set(initPos.x - 0.02, initPos.y + 0.015, initPos.z + 0.02);
+    shirtBody.collisionFilterGroup = 1 << 7;
+    shirtBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(shirtBody);
 
     const shirtMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.14, 12), shirtMat);
@@ -350,7 +350,7 @@ export class BagAssembly {
       name: "Spare Shirt",
       body: shirtBody,
       mesh: shirtMesh,
-      localPos: new THREE.Vector3(-0.02, -0.02, 0.02),
+      localPos: new THREE.Vector3(-0.02, 0.015, 0.02),
       isContained: true,
     });
 
@@ -365,8 +365,8 @@ export class BagAssembly {
     });
     keysBody.addShape(new CANNON.Sphere(0.022));
     keysBody.position.set(initPos.x + 0.06, initPos.y + 0.06, initPos.z + 0.04);
-    keysBody.collisionFilterGroup = SANDBOX_COL.CUP;
-    keysBody.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
+    keysBody.collisionFilterGroup = 1 << 7;
+    keysBody.collisionFilterMask = SANDBOX_COL.ENV;
     this.world.addBody(keysBody);
 
     const keysMesh = new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 12), keysMat);
@@ -442,15 +442,16 @@ export class BagAssembly {
     }
 
     // 3. Contained Payload Constraints (Soft spring connection to bag interior while packed)
-    if (this.mouthState === "zipped") {
+    if (this.mouthState === "zipped" || this.mouthState === "ajar") {
       for (const item of this.payloads) {
         if (item.isContained) {
           const pc = new CANNON.PointToPointConstraint(
             this.baseBody,
-            new CANNON.Vec3(item.localPos.x, item.localPos.y + 0.08, item.localPos.z),
+            new CANNON.Vec3(item.localPos.x, item.localPos.y, item.localPos.z),
             item.body,
             new CANNON.Vec3(0, 0, 0),
           );
+          pc.collideConnected = false;
           this.world.addConstraint(pc);
           this.payloadConstraints.push(pc);
         }
@@ -555,6 +556,9 @@ export class BagAssembly {
     for (const item of this.payloads) {
       if (item.isContained) {
         item.isContained = false;
+        // Enable full physics collision with cup/shards/environment when spilled
+        item.body.collisionFilterGroup = SANDBOX_COL.CUP;
+        item.body.collisionFilterMask = SANDBOX_COL.ENV | SANDBOX_COL.CUP | SANDBOX_COL.SHARD;
         item.body.wakeUp();
         // Give slight scattering velocity out through mouth aperture
         item.body.velocity.set(
@@ -586,6 +590,23 @@ export class BagAssembly {
 
   update(_dt: number) {
     const tilt = this.getTiltAngleDeg();
+
+    // Natural resting stabilization: suppress micro-jitter on contact surfaces
+    const linSpeed = this.baseBody.velocity.length();
+    const angSpeed = this.baseBody.angularVelocity.length();
+    if (tilt < 8 && linSpeed < 0.08 && angSpeed < 0.20 && this.spillState === "contained") {
+      this.baseBody.velocity.set(0, 0, 0);
+      this.baseBody.angularVelocity.set(0, 0, 0);
+      this.upperBody.velocity.set(0, 0, 0);
+      this.upperBody.angularVelocity.set(0, 0, 0);
+      for (const item of this.payloads) {
+        if (item.isContained) {
+          item.body.velocity.set(0, 0, 0);
+          item.body.angularVelocity.set(0, 0, 0);
+        }
+      }
+    }
+
     if (tilt > 50 && this.mouthState !== "zipped" && this.spillState === "contained") {
       this.spillContents();
     }
@@ -633,21 +654,25 @@ export class BagAssembly {
     }
   }
 
-  reset(initPos = new THREE.Vector3(0, 0.88, 0)) {
+  reset(initPos = new THREE.Vector3(0, 0.84, 0)) {
+    this.group.visible = true;
+    for (const item of this.payloads) {
+      item.mesh.visible = true;
+    }
     this.mouthState = "ajar";
     this.poseState = "supported";
     this.spillState = "contained";
     this.isBroken = false;
 
     // Base Body
-    this.baseBody.position.set(initPos.x, initPos.y - 0.10, initPos.z);
+    this.baseBody.position.set(initPos.x, initPos.y, initPos.z);
     this.baseBody.velocity.set(0, 0, 0);
     this.baseBody.angularVelocity.set(0, 0, 0);
     this.baseBody.quaternion.set(0, 0, 0, 1);
     this.baseBody.wakeUp();
 
     // Upper Body
-    this.upperBody.position.set(initPos.x, initPos.y + 0.06, initPos.z);
+    this.upperBody.position.set(initPos.x, initPos.y + 0.15, initPos.z);
     this.upperBody.velocity.set(0, 0, 0);
     this.upperBody.angularVelocity.set(0, 0, 0);
     this.upperBody.quaternion.set(0, 0, 0, 1);
@@ -658,7 +683,7 @@ export class BagAssembly {
       const side = i < 2 ? -0.06 : 0.06;
       const xOff = (i % 2 === 0 ? -0.08 : 0.08);
       const b = this.handleBodies[i];
-      b.position.set(initPos.x + xOff, initPos.y + 0.22, initPos.z + side);
+      b.position.set(initPos.x + xOff, initPos.y + 0.28, initPos.z + side);
       b.velocity.set(0, 0, 0);
       b.angularVelocity.set(0, 0, 0);
       b.quaternion.set(0, 0, 0, 1);
@@ -668,6 +693,8 @@ export class BagAssembly {
     // Payloads
     for (const item of this.payloads) {
       item.isContained = true;
+      item.body.collisionFilterGroup = 1 << 7;
+      item.body.collisionFilterMask = SANDBOX_COL.ENV;
       item.body.position.set(
         initPos.x + item.localPos.x,
         initPos.y + item.localPos.y,
@@ -680,6 +707,32 @@ export class BagAssembly {
     }
 
     this.attachConstraints();
+    this.syncMesh();
+  }
+
+  stow() {
+    this.group.visible = false;
+    for (const item of this.payloads) {
+      item.mesh.visible = false;
+      item.body.position.set(0, -50, 0);
+      item.body.velocity.set(0, 0, 0);
+      item.body.angularVelocity.set(0, 0, 0);
+      item.body.sleep();
+    }
+    this.baseBody.position.set(0, -50, 0);
+    this.baseBody.velocity.set(0, 0, 0);
+    this.baseBody.angularVelocity.set(0, 0, 0);
+    this.baseBody.sleep();
+    this.upperBody.position.set(0, -50, 0);
+    this.upperBody.velocity.set(0, 0, 0);
+    this.upperBody.angularVelocity.set(0, 0, 0);
+    this.upperBody.sleep();
+    for (const b of this.handleBodies) {
+      b.position.set(0, -50, 0);
+      b.velocity.set(0, 0, 0);
+      b.angularVelocity.set(0, 0, 0);
+      b.sleep();
+    }
     this.syncMesh();
   }
 

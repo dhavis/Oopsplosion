@@ -209,9 +209,9 @@ export class CupSandboxWorld {
         this.physics.addBody(prop.body);
         this.scene.add(prop.mesh);
       }
-      prop.mesh.visible = false;
-      prop.body.position.set(0, -50, 0);
+      prop.stow();
     }
+    this.cup.reset();
 
     this.liquid = new LiquidSimulation(this.scene);
     this.fracture = new FractureSystem(this.physics, this.scene, matShard);
@@ -423,23 +423,28 @@ export class CupSandboxWorld {
     this.liquid.reset();
     this.interaction.cancel();
 
-    // Hide all items
-    this.cup.mesh.visible = false;
-    this.cup.body.position.set(0, -50, 0);
-    this.cup.body.wakeUp();
-
-    for (const prop of this.props.values()) {
-      prop.mesh.visible = false;
-      prop.body.position.set(0, -50, 0);
-      prop.body.wakeUp();
+    // Stow cup if not active
+    if (id !== "cup") {
+      this.cup.mesh.visible = false;
+      this.cup.body.position.set(0, -50, 0);
+      this.cup.body.velocity.set(0, 0, 0);
+      this.cup.body.angularVelocity.set(0, 0, 0);
+      this.cup.body.sleep();
     }
 
+    // Stow inactive props
+    for (const [propId, prop] of this.props.entries()) {
+      if (propId !== id) {
+        prop.stow();
+      }
+    }
+
+    // Activate selected prop
     if (id === "cup") {
       this.cup.reset();
     } else {
       const p = this.props.get(id);
       if (p) {
-        p.mesh.visible = true;
         p.reset();
       }
     }

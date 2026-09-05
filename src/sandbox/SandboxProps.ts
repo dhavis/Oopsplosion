@@ -15,6 +15,7 @@ export interface SandboxItem {
   isBroken?: boolean;
   update(dt: number): void;
   reset(): void;
+  stow(): void;
   destroy(): void;
 }
 
@@ -76,11 +77,21 @@ export class PhoneProp implements SandboxItem {
   }
 
   reset() {
+    this.mesh.visible = true;
     this.body.position.set(0, 0.81, 0);
     this.body.velocity.set(0, 0, 0);
     this.body.angularVelocity.set(0, 0, 0);
     this.body.quaternion.set(0, 0, 0, 1);
     this.body.wakeUp();
+    this.syncMesh();
+  }
+
+  stow() {
+    this.mesh.visible = false;
+    this.body.position.set(0, -50, 0);
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+    this.body.sleep();
     this.syncMesh();
   }
 
@@ -155,11 +166,21 @@ export class FanProp implements SandboxItem {
   }
 
   reset() {
+    this.mesh.visible = true;
     this.body.position.set(0, 0.94, 0);
     this.body.velocity.set(0, 0, 0);
     this.body.angularVelocity.set(0, 0, 0);
     this.body.quaternion.set(0, 0, 0, 1);
     this.body.wakeUp();
+    this.syncMesh();
+  }
+
+  stow() {
+    this.mesh.visible = false;
+    this.body.position.set(0, -50, 0);
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+    this.body.sleep();
     this.syncMesh();
   }
 
@@ -189,6 +210,10 @@ export class PlantProp implements SandboxItem {
 
   reset() {
     this.assembly.reset(new THREE.Vector3(0, 0.91, 0));
+  }
+
+  stow() {
+    this.assembly.stow();
   }
 
   destroy() {
@@ -276,11 +301,21 @@ export class PrinterProp implements SandboxItem {
 
   reset() {
     this.feral = false;
+    this.mesh.visible = true;
     this.body.position.set(0, 0.95, 0);
     this.body.velocity.set(0, 0, 0);
     this.body.angularVelocity.set(0, 0, 0);
     this.body.quaternion.set(0, 0, 0, 1);
     this.body.wakeUp();
+    this.syncMesh();
+  }
+
+  stow() {
+    this.mesh.visible = false;
+    this.body.position.set(0, -50, 0);
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+    this.body.sleep();
     this.syncMesh();
   }
 
@@ -317,6 +352,10 @@ export class LampProp implements SandboxItem {
 
   reset() {
     this.assembly.reset(new THREE.Vector3(0, 1.85, 0), new THREE.Vector3(0, 1.05, 0));
+  }
+
+  stow() {
+    this.assembly.stow();
   }
 
   destroy() {
@@ -390,11 +429,21 @@ export class ChairProp implements SandboxItem {
   }
 
   reset() {
+    this.mesh.visible = true;
     this.body.position.set(0, 1.28, 0);
     this.body.velocity.set(0, 0, 0);
     this.body.angularVelocity.set(0, 0, 0);
     this.body.quaternion.set(0, 0, 0, 1);
     this.body.wakeUp();
+    this.syncMesh();
+  }
+
+  stow() {
+    this.mesh.visible = false;
+    this.body.position.set(0, -50, 0);
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+    this.body.sleep();
     this.syncMesh();
   }
 
@@ -413,7 +462,7 @@ export class BagProp implements SandboxItem {
   }
 
   constructor(material: CANNON.Material, world: CANNON.World, scene: THREE.Scene) {
-    this.assembly = new BagAssembly(world, scene, material, new THREE.Vector3(0, 0.88, 0), false);
+    this.assembly = new BagAssembly(world, scene, material, new THREE.Vector3(0, 0.84, 0), false);
     this.body = this.assembly.baseBody;
     this.mesh = this.assembly.group;
   }
@@ -423,7 +472,11 @@ export class BagProp implements SandboxItem {
   }
 
   reset() {
-    this.assembly.reset(new THREE.Vector3(0, 0.88, 0));
+    this.assembly.reset(new THREE.Vector3(0, 0.84, 0));
+  }
+
+  stow() {
+    this.assembly.stow();
   }
 
   destroy() {

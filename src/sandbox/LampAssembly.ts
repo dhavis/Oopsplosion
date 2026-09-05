@@ -553,6 +553,7 @@ export class LampAssembly {
   }
 
   reset(anchorPos = new THREE.Vector3(0, 2.15, 0), shadePos = new THREE.Vector3(0, 1.25, 0)) {
+    this.group.visible = true;
     this.bulbState = "intact";
     this.powerState = "on";
     this.isBroken = false;
@@ -606,6 +607,37 @@ export class LampAssembly {
     }
     this.sparkPoints.visible = false;
 
+    this.syncMesh();
+  }
+
+  stow() {
+    this.group.visible = false;
+    this.sparkPoints.visible = false;
+    this.bulbLight.intensity = 0;
+    this.flashLight.intensity = 0;
+    for (const shard of this.shards) {
+      shard.active = false;
+      shard.mesh.visible = false;
+      shard.body.position.set(0, -50, 0);
+      shard.body.velocity.set(0, 0, 0);
+      shard.body.angularVelocity.set(0, 0, 0);
+      shard.body.sleep();
+    }
+    this.anchorBody.position.set(0, -50, 0);
+    for (const b of this.cordBodies) {
+      b.position.set(0, -50, 0);
+      b.velocity.set(0, 0, 0);
+      b.angularVelocity.set(0, 0, 0);
+      b.sleep();
+    }
+    this.shadeBody.position.set(0, -50, 0);
+    this.shadeBody.velocity.set(0, 0, 0);
+    this.shadeBody.angularVelocity.set(0, 0, 0);
+    this.shadeBody.sleep();
+    this.bulbBody.position.set(0, -50, 0);
+    this.bulbBody.velocity.set(0, 0, 0);
+    this.bulbBody.angularVelocity.set(0, 0, 0);
+    this.bulbBody.sleep();
     this.syncMesh();
   }
 

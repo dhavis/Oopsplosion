@@ -191,7 +191,7 @@ export class PottedPlantAssembly {
     this.stemGroup = new THREE.Group();
     const stemMat = new THREE.MeshStandardMaterial({ color: "#3a5328", roughness: 0.6 });
     const mainStem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.32, 10), stemMat);
-    mainStem.position.y = 0.16;
+    mainStem.position.y = 0;
     this.stemGroup.add(mainStem);
 
     const leafMat = new THREE.MeshStandardMaterial({
@@ -202,13 +202,13 @@ export class PottedPlantAssembly {
     });
 
     const leafPositions: [number, number, number, number, number, number][] = [
-      [-0.07, 0.14, 0.04, 0.09, 0.24, 0.5],
-      [0.08, 0.18, -0.03, 0.10, 0.28, -0.6],
-      [-0.04, 0.25, -0.06, 0.09, 0.26, 0.8],
-      [0.06, 0.29, 0.05, 0.11, 0.30, -0.7],
-      [-0.02, 0.35, 0.06, 0.10, 0.28, 0.4],
-      [0.02, 0.38, -0.04, 0.09, 0.27, -0.5],
-      [0, 0.42, 0, 0.08, 0.25, 0.2],
+      [-0.07, -0.02, 0.04, 0.09, 0.24, 0.5],
+      [0.08, 0.02, -0.03, 0.10, 0.28, -0.6],
+      [-0.04, 0.09, -0.06, 0.09, 0.26, 0.8],
+      [0.06, 0.13, 0.05, 0.11, 0.30, -0.7],
+      [-0.02, 0.19, 0.06, 0.10, 0.28, 0.4],
+      [0.02, 0.22, -0.04, 0.09, 0.27, -0.5],
+      [0, 0.26, 0, 0.08, 0.25, 0.2],
     ];
 
     for (const [x, y, z, sx, sy, rz] of leafPositions) {
@@ -561,6 +561,8 @@ export class PottedPlantAssembly {
   }
 
   reset(pos = new THREE.Vector3(0, 0.91, 0)) {
+    this.group.visible = true;
+    this.crumbMesh.visible = true;
     this.potState = "intact";
     this.soilState = "contained";
     this.foliageState = "rooted";
@@ -616,6 +618,43 @@ export class PottedPlantAssembly {
       this.crumbMesh.instanceMatrix.needsUpdate = true;
     }
 
+    this.syncMesh();
+  }
+
+  stow() {
+    this.group.visible = false;
+    this.crumbMesh.visible = false;
+    for (const shard of this.shards) {
+      shard.active = false;
+      shard.mesh.visible = false;
+      shard.body.position.set(0, -50, 0);
+      shard.body.velocity.set(0, 0, 0);
+      shard.body.angularVelocity.set(0, 0, 0);
+      shard.body.sleep();
+    }
+    for (const crumb of this.crumbs) {
+      crumb.active = false;
+      crumb.body.position.set(0, -50, 0);
+      crumb.body.velocity.set(0, 0, 0);
+      crumb.body.angularVelocity.set(0, 0, 0);
+      crumb.body.sleep();
+    }
+    this.crumbMesh.count = 0;
+    if (this.crumbMesh.instanceMatrix) {
+      this.crumbMesh.instanceMatrix.needsUpdate = true;
+    }
+    this.potBody.position.set(0, -50, 0);
+    this.potBody.velocity.set(0, 0, 0);
+    this.potBody.angularVelocity.set(0, 0, 0);
+    this.potBody.sleep();
+    this.rootBallBody.position.set(0, -50, 0);
+    this.rootBallBody.velocity.set(0, 0, 0);
+    this.rootBallBody.angularVelocity.set(0, 0, 0);
+    this.rootBallBody.sleep();
+    this.stemBody.position.set(0, -50, 0);
+    this.stemBody.velocity.set(0, 0, 0);
+    this.stemBody.angularVelocity.set(0, 0, 0);
+    this.stemBody.sleep();
     this.syncMesh();
   }
 
